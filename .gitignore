@@ -145,3 +145,4 @@ Thumbs.db
 avatar_generator.log
 .avatar_expiry.pkl
 avatars/
+*.png

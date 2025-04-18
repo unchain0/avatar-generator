@@ -10,7 +10,7 @@ from .constants import DEFAULT_OUTPUT_DIR, EXPIRY_TRACKING_FILE
 from .expiry import cleanup_all_avatars, cleanup_expired_avatars
 
 
-def main():
+def main() -> None:
     """Parses command line arguments, cleans up expired avatars, and generates new ones.
 
     Sets up argument parsing for the number of avatars, output directory, and

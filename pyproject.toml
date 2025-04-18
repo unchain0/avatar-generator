@@ -1,0 +1,19 @@
+[project]
+name = "avatar-generator"
+version = "0.1.0"
+description = "Generate Unique Robot Avatars using RoboHash API"
+authors = [{ name = "Felippe Andrade", email = "unchain0@proton.me" }]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = ["requests (>=2.32.3,<3.0.0)", "tqdm (>=4.67.1,<5.0.0)"]
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.11.6"
+mypy = "^1.15.0"
+types-requests = "^2.32.0.20250328"
+types-tqdm = "^4.67.0.20250417"
+pre-commit = "^4.2.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

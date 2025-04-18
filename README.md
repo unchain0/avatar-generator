@@ -15,7 +15,7 @@ A simple Python script to generate unique robot avatars using the [RoboHash API]
 1. **Clone the repository:**
 
     ```bash
-    git clone <your-repository-url>
+    git clone https://github.com/unchain0/avatar-generator
     cd avatar-generator
     ```
 

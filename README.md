@@ -42,6 +42,7 @@ python main.py [OPTIONS]
 - `-o DIRECTORY`, `--output DIRECTORY`: Output directory for avatars (default: `avatars`).
 - `--expires-in DAYS`: Set an expiration time in days for the generated avatars. Expired avatars are deleted the next time the script runs based on this value (default: 1 day). This is ignored if `--cleanup-all` is used for the cleanup phase.
 - `--cleanup-all`: If present, delete ALL existing avatars in the output directory and clear the tracking file *before* generating new ones.
+- `--set SET_NAME`: Image set to use: `set1` (robots, default), `set2` (monsters), `set3` (robot heads), `set4` (kittens).
 
 **Examples:**
 
@@ -61,6 +62,12 @@ python main.py [OPTIONS]
 
     ```bash
     python main.py -n 10 --cleanup-all
+    ```
+
+- Generate 3 kitten avatars using set4:
+
+    ```bash
+    python main.py -n 3 --set set4
     ```
 
 ## How Expiration Works

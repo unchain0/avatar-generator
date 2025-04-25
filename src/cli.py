@@ -41,6 +41,14 @@ def main() -> None:
         help="Delete avatar automatically after this many days (requires running the script again). Default is 1 day.",
     )
     parser.add_argument(
+        "--set",
+        type=str,
+        default=Config.ROBOHASH_DEFAULT_SET.value,
+        choices=Config.ROBOHASH_SETS.value,
+        help="Image set to use: set1 (robots, default), set2 (monsters), set3 (robot heads), set4 (kittens)",
+        metavar="SET_NAME",
+    )
+    parser.add_argument(
         "--cleanup-all",
         action="store_true",
         help="Delete ALL existing avatars in the output directory before generating new ones. Overrides --expires-in for cleanup phase.",
@@ -77,6 +85,7 @@ def main() -> None:
                 output_dir=args.output,
                 expiration_days=args.expires_in,
                 tracking_file=tracking_file_path,
+                set_name=args.set,
             )
             if saved_path:
                 generated_count += 1

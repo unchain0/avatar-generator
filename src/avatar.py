@@ -12,6 +12,7 @@ def fetch_and_save_avatar(
     output_dir: str = Config.DEFAULT_OUTPUT_DIR.value,
     expiration_days: int | None = None,
     tracking_file: Path = Config.EXPIRY_TRACKING_FILE.value,
+    set_name: str = Config.ROBOHASH_DEFAULT_SET.value,
 ) -> Path | None:
     """Fetches an avatar from RoboHash, saves it locally, and tracks expiration.
 
@@ -29,6 +30,8 @@ def fetch_and_save_avatar(
             Defaults to None (no expiration tracking).
         tracking_file: The Path object pointing to the expiration tracking file.
             Defaults to EXPIRY_TRACKING_FILE.
+        set_name: The RoboHash image set to use (e.g., 'set1', 'set2').
+            Defaults to ROBOHASH_DEFAULT_SET.
 
     Returns:
         The absolute Path to the saved avatar image on success, or None if
@@ -38,7 +41,16 @@ def fetch_and_save_avatar(
         print("Error: Input string cannot be empty.")
         return None
 
-    url = f"https://robohash.org/{input_string}"
+    # Validate set_name
+    if set_name not in Config.ROBOHASH_SETS.value:
+        print(
+            f"Warning: Invalid set name '{set_name}'. Using default '{Config.ROBOHASH_DEFAULT_SET.value}'."
+        )
+        set_name = Config.ROBOHASH_DEFAULT_SET.value
+
+    # Construct URL with base and set parameter
+    base_url = Config.ROBOHASH_BASE_URL.value
+    url = f"{base_url}{input_string}?set={set_name}"
 
     # Generate filename based on current date and time
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")

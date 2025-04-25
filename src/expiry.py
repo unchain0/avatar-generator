@@ -3,11 +3,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .constants import EXPIRY_TRACKING_FILE
+from .constants import Config
 
 
 def load_expiry_data(
-    tracking_file: Path = EXPIRY_TRACKING_FILE,
+    tracking_file: Path = Config.EXPIRY_TRACKING_FILE.value,
 ) -> List[Dict[str, Any]]:
     """Loads expiry tracking data from the pickle file.
 
@@ -39,7 +39,7 @@ def load_expiry_data(
 
 
 def save_expiry_data(
-    data: List[Dict[str, Any]], tracking_file: Path = EXPIRY_TRACKING_FILE
+    data: List[Dict[str, Any]], tracking_file: Path = Config.EXPIRY_TRACKING_FILE.value
 ) -> None:
     """Saves expiry tracking data to the pickle file.
 
@@ -55,7 +55,9 @@ def save_expiry_data(
         print(f"Warning: Could not write expiry tracking file {tracking_file}: {e}")
 
 
-def cleanup_expired_avatars(tracking_file: Path = EXPIRY_TRACKING_FILE) -> None:
+def cleanup_expired_avatars(
+    tracking_file: Path = Config.EXPIRY_TRACKING_FILE.value,
+) -> None:
     """Checks the tracking file and deletes expired avatars.
 
     Reads the expiry data, iterates through entries, checks if the current time
@@ -120,7 +122,9 @@ def cleanup_expired_avatars(tracking_file: Path = EXPIRY_TRACKING_FILE) -> None:
 
 
 def add_expiry_tracking(
-    filepath: Path, expiration_days: int, tracking_file: Path = EXPIRY_TRACKING_FILE
+    filepath: Path,
+    expiration_days: int,
+    tracking_file: Path = Config.EXPIRY_TRACKING_FILE.value,
 ) -> None:
     """Adds expiry information for a newly created avatar to the pickle file.
 
@@ -151,7 +155,7 @@ def add_expiry_tracking(
 
 
 def cleanup_all_avatars(
-    output_dir_path: Path, tracking_file: Path = EXPIRY_TRACKING_FILE
+    output_dir_path: Path, tracking_file: Path = Config.EXPIRY_TRACKING_FILE.value
 ) -> None:
     """Deletes all .png files in the specified output directory and clears the tracking file.
 
@@ -172,7 +176,7 @@ def cleanup_all_avatars(
         return
 
     for item in output_dir_path.iterdir():
-        if item.is_file() and item.suffix.lower() == ".png":
+        if item.is_file() and item.suffix.lower() == Config.AVATAR_EXTENSION.value:
             try:
                 item.unlink()
                 print(f"  Deleted avatar: {item.name}")

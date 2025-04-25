@@ -1,19 +1,18 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import requests
 
-from .constants import DEFAULT_OUTPUT_DIR, EXPIRY_TRACKING_FILE
+from .constants import Config
 from .expiry import add_expiry_tracking
 
 
 def fetch_and_save_avatar(
     input_string: str,
-    output_dir: str = DEFAULT_OUTPUT_DIR,
-    expiration_days: Optional[int] = None,
-    tracking_file: Path = EXPIRY_TRACKING_FILE,
-) -> Optional[Path]:
+    output_dir: str = Config.DEFAULT_OUTPUT_DIR.value,
+    expiration_days: int | None = None,
+    tracking_file: Path = Config.EXPIRY_TRACKING_FILE.value,
+) -> Path | None:
     """Fetches an avatar from RoboHash, saves it locally, and tracks expiration.
 
     Generates a filename based on the current timestamp. Creates the output
@@ -43,7 +42,7 @@ def fetch_and_save_avatar(
 
     # Generate filename based on current date and time
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    filename = f"{timestamp}.png"
+    filename = f"{timestamp}{Config.AVATAR_EXTENSION.value}"
     output_path = Path(output_dir).absolute()
     filepath = output_path / filename
 

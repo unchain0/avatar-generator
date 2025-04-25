@@ -6,7 +6,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from .avatar import fetch_and_save_avatar
-from .constants import DEFAULT_OUTPUT_DIR, EXPIRY_TRACKING_FILE
+from .constants import Config
 from .expiry import cleanup_all_avatars, cleanup_expired_avatars
 
 
@@ -30,8 +30,8 @@ def main() -> None:
         "-o",
         "--output",
         type=str,
-        default=DEFAULT_OUTPUT_DIR,
-        help=f"Output directory for avatars (default: '{DEFAULT_OUTPUT_DIR}')",
+        default=Config.DEFAULT_OUTPUT_DIR.value,
+        help=f"Output directory for avatars (default: '{Config.DEFAULT_OUTPUT_DIR.value}')",
     )
     parser.add_argument(
         "--expires-in",
@@ -49,13 +49,13 @@ def main() -> None:
 
     # --- Determine paths --- Helper for clarity
     output_path = Path(args.output).absolute()
-    # EXPIRY_TRACKING_FILE is already absolute from constants.py
+    tracking_file_path = Config.EXPIRY_TRACKING_FILE.value
 
     # --- Cleanup Phase --- Decide which cleanup to run
     if args.cleanup_all:
-        cleanup_all_avatars(output_path, EXPIRY_TRACKING_FILE)
+        cleanup_all_avatars(output_path, tracking_file_path)
     else:
-        cleanup_expired_avatars(EXPIRY_TRACKING_FILE)
+        cleanup_expired_avatars(tracking_file_path)
     print("-" * 50)
 
     # --- Generate new avatars ---
@@ -76,7 +76,7 @@ def main() -> None:
                 sha256_hash,
                 output_dir=args.output,
                 expiration_days=args.expires_in,
-                tracking_file=EXPIRY_TRACKING_FILE,
+                tracking_file=tracking_file_path,
             )
             if saved_path:
                 generated_count += 1

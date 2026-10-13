@@ -1,0 +1,10 @@
+target
+data
+.git
+.github
+.cursor
+.gitignore
+.dockerignore
+README.md
+*.md
+tests

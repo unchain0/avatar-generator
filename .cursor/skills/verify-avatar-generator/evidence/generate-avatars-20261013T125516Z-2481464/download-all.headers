@@ -1,0 +1,6 @@
+HTTP/1.1 200 OK
+content-type: application/zip
+content-disposition: attachment; filename="avatars.zip"
+content-length: 30270
+date: Tue, 13 Oct 2026 12:55:19 GMT
+

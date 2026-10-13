@@ -13,3 +13,7 @@
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Verification scratch is under /tmp; keep skill evidence text but ignore bulky binaries if re-copied
+.cursor/skills/verify-avatar-generator/evidence/**/*.png
+.cursor/skills/verify-avatar-generator/evidence/**/*.zip

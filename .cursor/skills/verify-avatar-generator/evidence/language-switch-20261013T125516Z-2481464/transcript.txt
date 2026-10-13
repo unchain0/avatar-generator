@@ -1,0 +1,5 @@
+feature=language-switch origin=http://127.0.0.1:18100 run=20261013T125516Z-2481464
+default language is pt-BR
+lang=en serves English copy
+lang=pt-br restores Portuguese copy
+PASS evidence=/home/avell/.local/share/agents/eng-runs/jobs/avatar-rust/repo/.cursor/skills/verify-avatar-generator/evidence/language-switch-20261013T125516Z-2481464

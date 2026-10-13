@@ -1,9 +1,11 @@
 use avatar_generator::{app, build_state, config::Config, store::Store};
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -15,6 +17,10 @@ const PNG: &[u8] = &[
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xDE, 0xAD, 0xBE, 0xEF,
 ];
 
+fn peer() -> ConnectInfo<SocketAddr> {
+    ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 51234)))
+}
+
 fn config(base_url: String, data_dir: PathBuf, rate_limit: u32) -> Config {
     Config {
         port: 0,
@@ -25,6 +31,7 @@ fn config(base_url: String, data_dir: PathBuf, rate_limit: u32) -> Config {
         cleanup_interval_secs: 600,
         max_upstream_concurrency: 10,
         rate_limit_per_minute: rate_limit,
+        trust_forwarded_headers: false,
     }
 }
 
@@ -65,6 +72,7 @@ fn json_request(method: &str, uri: &str, body: Value, cookie: Option<&str>) -> R
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
+        .extension(peer())
         .header(header::CONTENT_TYPE, "application/json");
     if let Some(cookie) = cookie {
         builder = builder.header(header::COOKIE, cookie);
@@ -73,11 +81,31 @@ fn json_request(method: &str, uri: &str, body: Value, cookie: Option<&str>) -> R
 }
 
 fn get(uri: &str, cookie: Option<&str>) -> Request<Body> {
-    let mut builder = Request::builder().method("GET").uri(uri);
+    let mut builder = Request::builder().method("GET").uri(uri).extension(peer());
     if let Some(cookie) = cookie {
         builder = builder.header(header::COOKIE, cookie);
     }
     builder.body(Body::empty()).unwrap()
+}
+
+fn del(uri: &str, cookie: &str) -> Request<Body> {
+    Request::builder()
+        .method("DELETE")
+        .uri(uri)
+        .extension(peer())
+        .header(header::COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn post(uri: &str, cookie: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .extension(peer())
+        .header(header::COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap()
 }
 
 fn session_cookie(headers: &HeaderMap) -> String {
@@ -179,13 +207,7 @@ async fn delete_removes_avatar_from_session() {
     let payload: Value = serde_json::from_slice(&bytes).unwrap();
     let id = payload["avatars"][0]["id"].as_str().unwrap().to_string();
 
-    let request = Request::builder()
-        .method("DELETE")
-        .uri(format!("/avatar/{id}"))
-        .header(header::COOKIE, &cookie)
-        .body(Body::empty())
-        .unwrap();
-    let (status, _, _) = send(&router, request).await;
+    let (status, _, _) = send(&router, del(&format!("/avatar/{id}"), &cookie)).await;
     assert_eq!(status, StatusCode::OK);
 
     let (status, _, _) = send(&router, get(&format!("/avatar/{id}"), None)).await;
@@ -204,13 +226,7 @@ async fn clear_all_empties_the_session() {
     let payload: Value = serde_json::from_slice(&bytes).unwrap();
     let id = payload["avatars"][0]["id"].as_str().unwrap().to_string();
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/clear-all")
-        .header(header::COOKIE, &cookie)
-        .body(Body::empty())
-        .unwrap();
-    let (status, _, _) = send(&router, request).await;
+    let (status, _, _) = send(&router, post("/clear-all", &cookie)).await;
     assert_eq!(status, StatusCode::OK);
 
     let (status, _, _) = send(&router, get(&format!("/avatar/{id}"), None)).await;
@@ -248,4 +264,61 @@ async fn rate_limit_blocks_after_budget() {
 
     let (second, _, _) = send(&router, json_request("POST", "/generate", body, None)).await;
     assert_eq!(second, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn encoded_traversal_id_is_not_served() {
+    let server = MockServer::start().await;
+    let (router, _dir) = harness(&server, 100).await;
+
+    let (status, _, _) = send(&router, get("/avatar/%2e%2e%2f%2e%2e%2fetc%2fpasswd", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn same_seed_in_two_sessions_keeps_both_avatars() {
+    let server = MockServer::start().await;
+    let (router, _dir) = harness(&server, 100).await;
+
+    let body =
+        json!({"count": 1, "seed": "shared", "set": "set1", "background": "none", "size": 100});
+    let (_, first_headers, first_body) = send(
+        &router,
+        json_request("POST", "/generate", body.clone(), None),
+    )
+    .await;
+    let (_, second_headers, second_body) =
+        send(&router, json_request("POST", "/generate", body, None)).await;
+
+    let first_cookie = session_cookie(&first_headers);
+    let second_cookie = session_cookie(&second_headers);
+    let first_id = parse_id(&first_body);
+    let second_id = parse_id(&second_body);
+
+    assert_ne!(first_id, second_id);
+
+    let (status, _, _) = send(
+        &router,
+        get(&format!("/avatar/{first_id}"), Some(&first_cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &router,
+        get(&format!("/avatar/{second_id}"), Some(&second_cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, _) = send(&router, del(&format!("/avatar/{first_id}"), &second_cookie)).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "another session must not delete"
+    );
+}
+
+fn parse_id(body: &[u8]) -> String {
+    let payload: Value = serde_json::from_slice(body).unwrap();
+    payload["avatars"][0]["id"].as_str().unwrap().to_string()
 }

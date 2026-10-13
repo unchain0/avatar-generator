@@ -2,12 +2,16 @@ use crate::models::AvatarOptions;
 use std::time::Duration;
 
 pub const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(10);
+pub const MAX_AVATAR_BYTES: usize = 5 * 1024 * 1024;
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
 
 #[derive(Debug)]
 pub enum UpstreamError {
     Request(String),
     Status(u16),
     Empty,
+    TooLarge,
+    NotAnImage,
 }
 
 impl std::fmt::Display for UpstreamError {
@@ -16,6 +20,10 @@ impl std::fmt::Display for UpstreamError {
             UpstreamError::Request(msg) => write!(f, "request failed: {msg}"),
             UpstreamError::Status(code) => write!(f, "upstream returned status {code}"),
             UpstreamError::Empty => write!(f, "upstream returned an empty body"),
+            UpstreamError::TooLarge => {
+                write!(f, "upstream response exceeded {MAX_AVATAR_BYTES} bytes")
+            }
+            UpstreamError::NotAnImage => write!(f, "upstream body was not a PNG image"),
         }
     }
 }
@@ -37,6 +45,19 @@ pub fn avatar_url(base: &str, seed: &str, options: &AvatarOptions) -> String {
     url
 }
 
+fn validate_image(bytes: &[u8]) -> Result<(), UpstreamError> {
+    if bytes.is_empty() {
+        return Err(UpstreamError::Empty);
+    }
+    if bytes.len() > MAX_AVATAR_BYTES {
+        return Err(UpstreamError::TooLarge);
+    }
+    if !bytes.starts_with(&PNG_SIGNATURE) {
+        return Err(UpstreamError::NotAnImage);
+    }
+    Ok(())
+}
+
 pub async fn fetch_avatar(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, UpstreamError> {
     let response = client
         .get(url)
@@ -49,14 +70,19 @@ pub async fn fetch_avatar(client: &reqwest::Client, url: &str) -> Result<Vec<u8>
         return Err(UpstreamError::Status(response.status().as_u16()));
     }
 
+    if response
+        .content_length()
+        .is_some_and(|len| len > MAX_AVATAR_BYTES as u64)
+    {
+        return Err(UpstreamError::TooLarge);
+    }
+
     let bytes = response
         .bytes()
         .await
         .map_err(|e| UpstreamError::Request(e.to_string()))?;
 
-    if bytes.is_empty() {
-        return Err(UpstreamError::Empty);
-    }
+    validate_image(&bytes)?;
     Ok(bytes.to_vec())
 }
 
@@ -88,5 +114,12 @@ mod tests {
         };
         let url = avatar_url("https://robohash.org", "abcdef", &options);
         assert_eq!(url, "https://robohash.org/abcdef?set=set1&size=50x50");
+    }
+
+    #[test]
+    fn validate_accepts_png_and_rejects_other_bodies() {
+        assert!(validate_image(&PNG_SIGNATURE).is_ok());
+        assert!(validate_image(b"<html>oops</html>").is_err());
+        assert!(validate_image(b"").is_err());
     }
 }

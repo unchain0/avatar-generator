@@ -8,6 +8,7 @@ pub const VALID_SIZES: [u32; 9] = [50, 100, 200, 300, 400, 500, 640, 800, 1024];
 pub const DEFAULT_TTL_DAYS: i64 = 1;
 pub const MAX_TTL_DAYS: i64 = 30;
 pub const MAX_SEED_LEN: usize = 128;
+pub const MAX_SESSION_AVATARS: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoboSet {
@@ -132,7 +133,7 @@ pub fn validate_generate_request(
 
     let seed = req.seed.as_deref().map(str::trim).filter(|s| !s.is_empty());
     if let Some(seed) = seed {
-        if seed.len() > MAX_SEED_LEN {
+        if seed.chars().count() > MAX_SEED_LEN {
             return Err(format!("seed must be at most {MAX_SEED_LEN} characters"));
         }
     }
@@ -288,6 +289,18 @@ mod tests {
         req.seed = Some("   ".into());
         let validated = validate_generate_request(&req, DEFAULT_TTL_DAYS).unwrap();
         assert!(validated.seed.is_none());
+    }
+
+    #[test]
+    fn validate_counts_seed_characters_not_bytes() {
+        let mut req = base_request();
+        req.seed = Some("ç".repeat(MAX_SEED_LEN));
+        let validated = validate_generate_request(&req, DEFAULT_TTL_DAYS).unwrap();
+        assert_eq!(validated.seed.unwrap().chars().count(), MAX_SEED_LEN);
+
+        let mut req = base_request();
+        req.seed = Some("ç".repeat(MAX_SEED_LEN + 1));
+        assert!(validate_generate_request(&req, DEFAULT_TTL_DAYS).is_err());
     }
 
     #[test]

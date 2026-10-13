@@ -1,12 +1,12 @@
 use crate::models::{
     derive_seed, random_base_seed, validate_generate_request, AvatarRecord, AvatarView,
-    GenerateRequest, GenerateResponse,
+    GenerateRequest, GenerateResponse, MAX_SESSION_AVATARS,
 };
 use crate::upstream::{avatar_url, fetch_avatar};
 use crate::AppState;
 use askama::Template;
 use axum::{
-    extract::{Path as AxumPath, State},
+    extract::{ConnectInfo, Path as AxumPath, State},
     http::{
         header::{CONTENT_DISPOSITION, CONTENT_TYPE, SET_COOKIE},
         HeaderMap, HeaderValue, StatusCode,
@@ -16,6 +16,7 @@ use axum::{
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use std::io::{Cursor, Write};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::task::JoinSet;
 use tracing::{error, warn};
@@ -26,7 +27,7 @@ use zip::CompressionMethod;
 const SESSION_COOKIE: &str = "avatar_session_id";
 const LANG_COOKIE: &str = "lang";
 const DEFAULT_LANG: &str = "pt-br";
-const COOKIE_MAX_AGE: &str = "Max-Age=604800";
+const SESSION_COOKIE_MAX_AGE: i64 = crate::models::MAX_TTL_DAYS * 24 * 60 * 60;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lang {
@@ -170,25 +171,31 @@ fn lang(headers: &HeaderMap) -> Lang {
     Lang::parse(&cookie_value(headers, LANG_COOKIE).unwrap_or_else(|| DEFAULT_LANG.to_string()))
 }
 
-fn client_ip(headers: &HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "unknown".to_string())
+fn client_key(headers: &HeaderMap, peer: SocketAddr, trust_forwarded: bool) -> String {
+    if trust_forwarded {
+        if let Some(forwarded) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+        {
+            return forwarded;
+        }
+        if let Some(real) = headers
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+        {
+            return real;
+        }
+    }
+    peer.ip().to_string()
 }
 
 fn session_cookie(session: &str) -> HeaderValue {
     HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Lax; {COOKIE_MAX_AGE}"
+        "{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_COOKIE_MAX_AGE}"
     ))
     .expect("session cookie is ASCII")
 }
@@ -240,15 +247,30 @@ pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Respons
 
 pub async fn generate(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(payload): Json<GenerateRequest>,
 ) -> Response {
     let session = session_id(&headers);
 
-    if !state.rate.check(&client_ip(&headers)) {
+    if !state.rate.check(&client_key(
+        &headers,
+        peer,
+        state.config.trust_forwarded_headers,
+    )) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({ "error": "rate limit exceeded" })),
+        )
+            .into_response();
+    }
+
+    if state.store.count_session(&session) >= MAX_SESSION_AVATARS {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": format!("session already holds the maximum of {MAX_SESSION_AVATARS} avatars")
+            })),
         )
             .into_response();
     }
@@ -294,8 +316,8 @@ pub async fn generate(
     let mut avatars = Vec::with_capacity(fetched.len());
     for (_, seed, bytes) in fetched {
         let record = AvatarRecord {
-            id: seed.clone(),
-            seed: seed.clone(),
+            id: Uuid::new_v4().to_string(),
+            seed,
             options,
             created_at: Utc::now(),
             expires_at,
@@ -304,7 +326,7 @@ pub async fn generate(
         let view = record.view();
         match state.store.save(record, &bytes) {
             Ok(()) => avatars.push(view),
-            Err(e) => error!("failed to persist avatar {seed}: {e}"),
+            Err(e) => error!("failed to persist avatar: {e}"),
         }
     }
 

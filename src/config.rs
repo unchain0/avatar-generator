@@ -10,6 +10,7 @@ pub struct Config {
     pub cleanup_interval_secs: u64,
     pub max_upstream_concurrency: usize,
     pub rate_limit_per_minute: u32,
+    pub trust_forwarded_headers: bool,
 }
 
 impl Config {
@@ -28,6 +29,7 @@ impl Config {
             cleanup_interval_secs: 600,
             max_upstream_concurrency: 10,
             rate_limit_per_minute: 30,
+            trust_forwarded_headers: env_parse_bool("TRUST_PROXY", false),
         }
     }
 }
@@ -43,12 +45,25 @@ impl Default for Config {
             cleanup_interval_secs: 600,
             max_upstream_concurrency: 10,
             rate_limit_per_minute: 30,
+            trust_forwarded_headers: false,
         }
     }
 }
 
 fn env_path(key: &str, default: &str) -> PathBuf {
     PathBuf::from(std::env::var(key).unwrap_or_else(|_| default.to_string()))
+}
+
+fn env_parse_bool(key: &str, default: bool) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default)
 }
 
 fn env_parse<T>(key: &str, default: T) -> T

@@ -54,6 +54,16 @@ impl Store {
 
         let mut guard = self.lock();
         let mut next = guard.clone();
+        let is_new = !next.contains_key(&record.id);
+        if is_new {
+            let session_count = next
+                .values()
+                .filter(|r| r.session_id == record.session_id)
+                .count();
+            if session_count >= crate::models::MAX_SESSION_AVATARS {
+                return Err(io::Error::other("session avatar cap exceeded"));
+            }
+        }
         next.insert(record.id.clone(), record);
 
         std::fs::write(&path, bytes)?;
@@ -116,6 +126,24 @@ impl Store {
             .values()
             .filter(|r| r.session_id == session_id)
             .count()
+    }
+
+    /// Atomically reserve capacity for a session. Returns Ok(()) if the session
+    /// can accommodate `additional` more avatars, otherwise returns an error.
+    /// The reservation is not persisted; it only ensures the check and the
+    /// subsequent save happen atomically with respect to other reservations.
+    pub fn reserve_capacity(&self, session_id: &str, additional: usize) -> io::Result<()> {
+        let guard = self.lock();
+        let session_count = guard
+            .values()
+            .filter(|r| r.session_id == session_id)
+            .count();
+        if session_count + additional > crate::models::MAX_SESSION_AVATARS {
+            return Err(io::Error::other(
+                "session would exceed the maximum avatar cap",
+            ));
+        }
+        Ok(())
     }
 
     pub fn clear_session(&self, session_id: &str) -> io::Result<usize> {

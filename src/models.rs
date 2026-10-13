@@ -9,6 +9,7 @@ pub const DEFAULT_TTL_DAYS: i64 = 1;
 pub const MAX_TTL_DAYS: i64 = 30;
 pub const MAX_SEED_LEN: usize = 128;
 pub const MAX_SESSION_AVATARS: usize = 100;
+pub const MAX_ARCHIVE_BYTES: usize = 100 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoboSet {

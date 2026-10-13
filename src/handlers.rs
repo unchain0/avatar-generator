@@ -1,6 +1,6 @@
 use crate::models::{
     derive_seed, random_base_seed, validate_generate_request, AvatarRecord, AvatarView,
-    GenerateRequest, GenerateResponse, MAX_SESSION_AVATARS,
+    GenerateRequest, GenerateResponse,
 };
 use crate::upstream::{avatar_url, fetch_avatar};
 use crate::AppState;
@@ -265,16 +265,6 @@ pub async fn generate(
             .into_response();
     }
 
-    if state.store.count_session(&session) >= MAX_SESSION_AVATARS {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": format!("session already holds the maximum of {MAX_SESSION_AVATARS} avatars")
-            })),
-        )
-            .into_response();
-    }
-
     let validated = match validate_generate_request(&payload, state.config.default_ttl_days) {
         Ok(v) => v,
         Err(message) => {
@@ -285,6 +275,17 @@ pub async fn generate(
                 .into_response();
         }
     };
+
+    if let Err(e) = state
+        .store
+        .reserve_capacity(&session, validated.count as usize)
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
 
     let base_seed = validated.seed.clone().unwrap_or_else(random_base_seed);
     let options = validated.options;
@@ -423,30 +424,60 @@ pub async fn download_all(State(state): State<AppState>, headers: HeaderMap) -> 
         return (StatusCode::NOT_FOUND, "no avatars in this session").into_response();
     }
 
-    let cursor = Cursor::new(Vec::new());
-    let mut zip = zip::ZipWriter::new(cursor);
-    let options = FileOptions::default().compression_method(CompressionMethod::Stored);
-
+    let mut total_size: usize = 0;
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(records.len());
     for record in &records {
         match state.store.read_image(&record.id) {
             Ok(Some(bytes)) => {
-                if let Err(e) = zip.start_file(format!("{}.png", record.id), options) {
-                    error!("failed to add {} to zip: {e}", record.id);
-                    continue;
+                total_size += bytes.len();
+                if total_size > crate::models::MAX_ARCHIVE_BYTES {
+                    return (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        Json(serde_json::json!({
+                            "error": "archive too large"
+                        })),
+                    )
+                        .into_response();
                 }
-                if let Err(e) = zip.write_all(&bytes) {
-                    error!("failed to write {} to zip: {e}", record.id);
-                }
+                entries.push((record.id.clone(), bytes));
             }
             Ok(None) => {}
-            Err(e) => error!("failed to read {} for zip: {e}", record.id),
+            Err(e) => {
+                error!("failed to read {} for zip: {e}", record.id);
+            }
         }
     }
 
-    let data = match zip.finish() {
-        Ok(cursor) => cursor.into_inner(),
-        Err(e) => {
+    if entries.is_empty() {
+        return (StatusCode::NOT_FOUND, "no avatars in this session").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(move || {
+        let cursor = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(cursor);
+        let options = FileOptions::default().compression_method(CompressionMethod::Stored);
+
+        for (id, bytes) in &entries {
+            if let Err(e) = zip.start_file(format!("{id}.png"), options) {
+                error!("failed to add {id} to zip: {e}");
+                continue;
+            }
+            if let Err(e) = zip.write_all(bytes) {
+                error!("failed to write {id} to zip: {e}");
+            }
+        }
+        zip.finish().map(|c| c.into_inner())
+    })
+    .await;
+
+    let data = match result {
+        Ok(Ok(data)) => data,
+        Ok(Err(e)) => {
             error!("failed to finish zip: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+        }
+        Err(e) => {
+            error!("zip task panicked: {e}");
             return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
         }
     };

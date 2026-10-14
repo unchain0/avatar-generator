@@ -315,6 +315,8 @@ pub async fn generate(
 
     let expires_at = Utc::now() + ChronoDuration::days(validated.ttl_days);
     let mut avatars = Vec::with_capacity(fetched.len());
+    let session_for_release = session.clone();
+    let count_for_release = validated.count as usize;
     for (_, seed, bytes) in fetched {
         let record = AvatarRecord {
             id: Uuid::new_v4().to_string(),
@@ -330,6 +332,8 @@ pub async fn generate(
             Err(e) => error!("failed to persist avatar: {e}"),
         }
     }
+
+    state.store.release_reservation(&session_for_release, count_for_release);
 
     if avatars.is_empty() {
         return (

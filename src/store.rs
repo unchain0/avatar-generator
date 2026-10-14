@@ -9,6 +9,7 @@ pub struct Store {
     data_dir: PathBuf,
     index_path: PathBuf,
     records: Mutex<HashMap<String, AvatarRecord>>,
+    pending: Mutex<HashMap<String, usize>>,
 }
 
 fn is_valid_id(id: &str) -> bool {
@@ -24,6 +25,7 @@ impl Store {
             data_dir,
             index_path,
             records: Mutex::new(records),
+            pending: Mutex::new(HashMap::new()),
         })
     }
 
@@ -134,16 +136,22 @@ impl Store {
     /// subsequent save happen atomically with respect to other reservations.
     pub fn reserve_capacity(&self, session_id: &str, additional: usize) -> io::Result<()> {
         let guard = self.lock();
-        let session_count = guard
-            .values()
-            .filter(|r| r.session_id == session_id)
-            .count();
-        if session_count + additional > crate::models::MAX_SESSION_AVATARS {
-            return Err(io::Error::other(
-                "session would exceed the maximum avatar cap",
-            ));
+        let mut pend = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let session_count = guard.values().filter(|r| r.session_id == session_id).count();
+        let reserved = pend.get(session_id).copied().unwrap_or(0);
+        if session_count + reserved + additional > crate::models::MAX_SESSION_AVATARS {
+            return Err(io::Error::other("session would exceed the maximum avatar cap"));
         }
+        *pend.entry(session_id.to_string()).or_insert(0) += additional;
         Ok(())
+    }
+
+    pub fn release_reservation(&self, session_id: &str, count: usize) {
+        let mut pend = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(v) = pend.get_mut(session_id) {
+            *v = v.saturating_sub(count);
+            if *v == 0 { pend.remove(session_id); }
+        }
     }
 
     pub fn clear_session(&self, session_id: &str) -> io::Result<usize> {

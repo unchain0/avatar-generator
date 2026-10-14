@@ -1,0 +1,14 @@
+feature=generate-avatars origin=http://127.0.0.1:18100 run=20261014T135220Z-4143524
+GET / (session bootstrap)
+POST /generate count=0 -> 400 body={"error":"count must be between 1 and 50"}
+POST /generate valid -> 200
+avatars id1=a4e297e7-3dfe-424d-81ed-77a2166ca400 id2=ab14d397-51e1-49a4-8aa7-961c6b3fa2e3
+GET / gallery contains both cards
+GET /avatar/a4e297e7-3dfe-424d-81ed-77a2166ca400 -> 200 bytes=21693
+GET /download/a4e297e7-3dfe-424d-81ed-77a2166ca400 -> 200
+GET /download-all -> 200 bytes=40588
+DATA_DIR png files=2
+DELETE /avatar/ab14d397-51e1-49a4-8aa7-961c6b3fa2e3 -> 200 body={"success":true}
+POST /clear-all -> 200 body={"removed":1,"success":true}
+GET / after clear-all shows empty gallery
+PASS evidence=/home/avell/.local/share/agents/eng-runs/pr-queue/work/avatar-generator-4/.cursor/skills/verify-avatar-generator/evidence/generate-avatars-20261014T135220Z-4143524

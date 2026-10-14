@@ -287,6 +287,23 @@ pub async fn generate(
             .into_response();
     }
 
+    struct ReservationGuard {
+        session: String,
+        count: usize,
+        store: std::sync::Arc<crate::store::Store>,
+    }
+    impl Drop for ReservationGuard {
+        fn drop(&mut self) {
+            self.store.release_reservation(&self.session, self.count);
+        }
+    }
+
+    let guard = ReservationGuard {
+        session: session.clone(),
+        count: validated.count as usize,
+        store: state.store.clone(),
+    };
+
     let base_seed = validated.seed.clone().unwrap_or_else(random_base_seed);
     let options = validated.options;
 
@@ -315,8 +332,6 @@ pub async fn generate(
 
     let expires_at = Utc::now() + ChronoDuration::days(validated.ttl_days);
     let mut avatars = Vec::with_capacity(fetched.len());
-    let session_for_release = session.clone();
-    let count_for_release = validated.count as usize;
     for (_, seed, bytes) in fetched {
         let record = AvatarRecord {
             id: Uuid::new_v4().to_string(),
@@ -333,7 +348,7 @@ pub async fn generate(
         }
     }
 
-    state.store.release_reservation(&session_for_release, count_for_release);
+    let _guard = guard;
 
     if avatars.is_empty() {
         return (

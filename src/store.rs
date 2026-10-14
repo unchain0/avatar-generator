@@ -137,10 +137,15 @@ impl Store {
     pub fn reserve_capacity(&self, session_id: &str, additional: usize) -> io::Result<()> {
         let guard = self.lock();
         let mut pend = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        let session_count = guard.values().filter(|r| r.session_id == session_id).count();
+        let session_count = guard
+            .values()
+            .filter(|r| r.session_id == session_id)
+            .count();
         let reserved = pend.get(session_id).copied().unwrap_or(0);
         if session_count + reserved + additional > crate::models::MAX_SESSION_AVATARS {
-            return Err(io::Error::other("session would exceed the maximum avatar cap"));
+            return Err(io::Error::other(
+                "session would exceed the maximum avatar cap",
+            ));
         }
         *pend.entry(session_id.to_string()).or_insert(0) += additional;
         Ok(())
@@ -150,7 +155,9 @@ impl Store {
         let mut pend = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(v) = pend.get_mut(session_id) {
             *v = v.saturating_sub(count);
-            if *v == 0 { pend.remove(session_id); }
+            if *v == 0 {
+                pend.remove(session_id);
+            }
         }
     }
 

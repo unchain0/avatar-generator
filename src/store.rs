@@ -68,7 +68,8 @@ impl Store {
                 return Err(io::Error::other("session avatar cap exceeded"));
             }
         }
-        next.insert(record.id.clone(), record);
+        let avatar_id = record.id.clone();
+        next.insert(avatar_id.clone(), record);
 
         // Write the PNG to a temporary path first so we can clean up on index failure.
         std::fs::write(&temp_path, bytes)?;
@@ -80,9 +81,22 @@ impl Store {
         }
 
         // Index succeeded — move the temp PNG to its final location.
-        std::fs::rename(&temp_path, &path)?;
-        *guard = next;
-        Ok(())
+        match std::fs::rename(&temp_path, &path) {
+            Ok(()) => {
+                *guard = next;
+                Ok(())
+            }
+            Err(_e) => {
+                // Rename failed after index persisted — roll back the index
+                // on disk and in memory so the gallery does not render a broken card.
+                guard.remove(&avatar_id);
+                let _ = self.persist(&guard);
+                let _ = std::fs::remove_file(&temp_path);
+                Err(io::Error::other(
+                    "rename failed after index persist; index rolled back"
+                ))
+            }
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<AvatarRecord> {

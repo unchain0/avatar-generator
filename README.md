@@ -50,14 +50,23 @@ All configuration is read from the environment.
 ## Docker
 
 ```bash
-mkdir -p $PWD/data && chown 10001:10001 $PWD/data
+mkdir -p $PWD/data
+# chown requires host root privileges (uses sudo, or initialize inside the container)
+sudo chown 10001:10001 $PWD/data
 docker run --rm -p 8080:8080 -v "$PWD/data:/data" avatar-generator
 ```
 
 The image builds with `cargo-chef`, runs as a non-root user (UID 10001), ships
 `ca-certificates`, and exposes port `8080`. Creating the directory beforehand
 and chowning it to the image's user ensures the first `Store::save` can create
-the PNG and `index.json` without a 502 error.
+the PNG and `index.json` without a 502 error. If you do not have host root,
+use `sudo` for the `chown` step or initialize the mount inside a throwaway
+root container before starting the server:
+
+```bash
+docker run --rm -v "$PWD/data:/data" busybox sh -c 'chown 10001:10001 /data'
+docker run --rm -p 8080:8080 -v "$PWD/data:/data" avatar-generator
+```
 
 Alternatively, a named volume can be used:
 

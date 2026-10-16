@@ -432,7 +432,8 @@ pub async fn delete_avatar(
     }
 
     match state.store.delete(&id) {
-        Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
+        Ok(true) => Json(serde_json::json!({ "success": true })).into_response(),
+        Ok(false) => (StatusCode::INTERNAL_SERVER_ERROR, "failed to delete avatar").into_response(),
         Err(e) => {
             error!("failed to delete avatar {id}: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()

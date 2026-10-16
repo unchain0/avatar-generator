@@ -202,7 +202,6 @@ impl Store {
         // Persist the proposed index first, so that if it fails the old index
         // still reflects the current on-disk state and no PNGs have been deleted yet.
         if self.persist(&next).is_err() {
-            *guard = next;
             return Err(io::Error::other("index persist failed; no files deleted"));
         }
 
@@ -236,6 +235,13 @@ impl Store {
         let mut next = guard.clone();
         next.retain(|_, r| r.expires_at > now);
 
+        // Persist the index first, so that if it fails the old index still reflects
+        // the current on-disk state and no PNGs have been deleted yet.
+        if self.persist(&next).is_err() {
+            return Err(io::Error::other("index persist failed; no files deleted"));
+        }
+
+        // Index persisted successfully — now remove the PNG files.
         for id in &expired {
             if let Some(path) = self.image_path(id) {
                 match std::fs::remove_file(path) {
@@ -246,7 +252,6 @@ impl Store {
             }
         }
 
-        self.persist(&next)?;
         *guard = next;
         Ok(expired.len())
     }
@@ -387,6 +392,72 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf()).unwrap();
         assert!(!store.delete(ID_A).unwrap());
+    }
+
+    /// When persist() fails, clear_session must leave the in-memory index
+    /// intact (guard unchanged) and not touch any PNG files. Otherwise a
+    /// failed clear would empty the session in memory while the on-disk index
+    /// and PNGs still reference them, permanently orphaning the avatars.
+    #[test]
+    fn clear_session_keeps_index_on_persist_failure() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::new(dir.path().to_path_buf()).unwrap();
+        let future = Utc::now() + chrono::Duration::days(1);
+
+        store
+            .save(record(ID_A, "session-a", future), b"a1")
+            .unwrap();
+        store
+            .save(record(ID_B, "session-a", future), b"a2")
+            .unwrap();
+
+        store.index_path = dir.path().join("missing/index.json");
+
+        let result = store.clear_session("session-a");
+        assert!(
+            result.is_err(),
+            "clear_session must fail when persist fails"
+        );
+
+        // Guard must be unchanged: both records survive in memory and on disk.
+        assert_eq!(store.list_session("session-a").len(), 2);
+        assert!(store.get(ID_A).is_some());
+        assert!(store.get(ID_B).is_some());
+        assert!(store.image_path(ID_A).unwrap().exists());
+        assert!(store.image_path(ID_B).unwrap().exists());
+    }
+
+    /// cleanup_expired must persist the proposed index BEFORE unlinking PNGs.
+    /// If persistence fails, the expired record must remain in the index and
+    /// its PNG must stay on disk (no broken-image state).
+    #[test]
+    fn cleanup_expired_keeps_index_on_persist_failure() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::new(dir.path().to_path_buf()).unwrap();
+        let now = Utc::now();
+
+        store
+            .save(record(ID_A, "s1", now - chrono::Duration::hours(1)), b"old")
+            .unwrap();
+        store
+            .save(
+                record(ID_B, "s1", now + chrono::Duration::hours(1)),
+                b"fresh",
+            )
+            .unwrap();
+
+        store.index_path = dir.path().join("missing/index.json");
+
+        let result = store.cleanup_expired(now);
+        assert!(
+            result.is_err(),
+            "cleanup_expired must fail when persist fails"
+        );
+
+        // The expired record must NOT be unlinked: still in index and on disk.
+        assert!(store.get(ID_A).is_some());
+        assert!(store.image_path(ID_A).unwrap().exists());
+        assert!(store.get(ID_B).is_some());
     }
 
     #[test]

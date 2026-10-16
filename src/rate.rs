@@ -36,11 +36,17 @@ impl RateLimiter {
         let now = Instant::now();
         let mut buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
 
-        // If we've reached the maximum number of buckets, evict the oldest
-        // entry to make room. This prevents the map from growing without bound
-        // under sustained distributed traffic where more than 10,000 distinct
-        // clients make requests within one window.
-        if buckets.len() >= self.max_buckets {
+        // Prune expired entries first: remove entries whose window has passed.
+        // This is cheaper and more targeted than evicting the oldest entry
+        // blindly, and it preserves counters for active keys.
+        buckets.retain(|_, w| now.duration_since(w.started) < self.window);
+
+        // If the key is already present, we don't need to evict — just update
+        // its counter below. Only evict when the key is absent and we still
+        // need room under the max_buckets cap.
+        let key_present = buckets.contains_key(key);
+
+        if !key_present && buckets.len() >= self.max_buckets {
             let oldest_key = buckets
                 .iter()
                 .min_by_key(|(_, w)| w.started)

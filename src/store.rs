@@ -54,6 +54,8 @@ impl Store {
             .image_path(&record.id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid avatar id"))?;
 
+        let temp_path = self.data_dir.join(format!(".tmp_{}.png", record.id));
+
         let mut guard = self.lock();
         let mut next = guard.clone();
         let is_new = !next.contains_key(&record.id);
@@ -68,8 +70,17 @@ impl Store {
         }
         next.insert(record.id.clone(), record);
 
-        std::fs::write(&path, bytes)?;
-        self.persist(&next)?;
+        // Write the PNG to a temporary path first so we can clean up on index failure.
+        std::fs::write(&temp_path, bytes)?;
+
+        // Persist the index first. On failure, remove the temp PNG and return error.
+        if self.persist(&next).is_err() {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(io::Error::other("index persist failed; PNG removed"));
+        }
+
+        // Index succeeded — move the temp PNG to its final location.
+        std::fs::rename(&temp_path, &path)?;
         *guard = next;
         Ok(())
     }
@@ -188,6 +199,14 @@ impl Store {
         let mut next = guard.clone();
         next.retain(|_, r| r.session_id != session_id);
 
+        // Persist the proposed index first, so that if it fails the old index
+        // still reflects the current on-disk state and no PNGs have been deleted yet.
+        if self.persist(&next).is_err() {
+            *guard = next;
+            return Err(io::Error::other("index persist failed; no files deleted"));
+        }
+
+        // Index persisted successfully — now remove the PNG files.
         for id in &ids {
             if let Some(path) = self.image_path(id) {
                 match std::fs::remove_file(path) {
@@ -198,7 +217,6 @@ impl Store {
             }
         }
 
-        self.persist(&next)?;
         *guard = next;
         Ok(ids.len())
     }

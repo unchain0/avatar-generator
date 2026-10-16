@@ -50,7 +50,7 @@ All configuration is read from the environment.
 ## Docker
 
 ```bash
-mkdir -p $PWD/data && chown 10001:$PWD/data $PWD/data
+mkdir -p $PWD/data && chown 10001:10001 $PWD/data
 docker run --rm -p 8080:8080 -v "$PWD/data:/data" avatar-generator
 ```
 

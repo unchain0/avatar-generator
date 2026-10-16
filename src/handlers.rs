@@ -355,7 +355,7 @@ pub async fn generate(
                 }
             }
             Ok((index, seed, Err(e))) => warn!("avatar {index} ({seed}) failed: {e}"),
-            Err(e) => error!("avatar task panicked: {e}"),
+            Err(_) => error!("avatar task panicked"),
         }
     }
 
@@ -458,12 +458,15 @@ pub async fn download_all(State(state): State<AppState>, headers: HeaderMap) -> 
         return (StatusCode::NOT_FOUND, "no avatars in this session").into_response();
     }
 
+    // Collect (id, path) pairs and compute total size via file metadata.
+    // This avoids reading all avatar bytes into memory before ZIP construction.
     let mut total_size: usize = 0;
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(records.len());
+    let mut ids_and_paths: Vec<(String, PathBuf)> = Vec::with_capacity(records.len());
     for record in &records {
-        match state.store.read_image(&record.id) {
-            Ok(Some(bytes)) => {
-                total_size += bytes.len();
+        if let Some(path) = state.store.image_path(&record.id) {
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                let size = metadata.len() as usize;
+                total_size += size;
                 if total_size > crate::models::MAX_ARCHIVE_BYTES {
                     return (
                         StatusCode::PAYLOAD_TOO_LARGE,
@@ -473,16 +476,12 @@ pub async fn download_all(State(state): State<AppState>, headers: HeaderMap) -> 
                     )
                         .into_response();
                 }
-                entries.push((record.id.clone(), bytes));
             }
-            Ok(None) => {}
-            Err(e) => {
-                error!("failed to read {} for zip: {e}", record.id);
-            }
+            ids_and_paths.push((record.id.clone(), path));
         }
     }
 
-    if entries.is_empty() {
+    if ids_and_paths.is_empty() {
         return (StatusCode::NOT_FOUND, "no avatars in this session").into_response();
     }
 
@@ -491,13 +490,17 @@ pub async fn download_all(State(state): State<AppState>, headers: HeaderMap) -> 
         let mut zip = zip::ZipWriter::new(cursor);
         let options = FileOptions::default().compression_method(CompressionMethod::Stored);
 
-        for (id, bytes) in &entries {
-            if let Err(e) = zip.start_file(format!("{id}.png"), options) {
-                error!("failed to add {id} to zip: {e}");
-                continue;
-            }
-            if let Err(e) = zip.write_all(bytes) {
-                error!("failed to write {id} to zip: {e}");
+        for (id, path) in &ids_and_paths {
+            if let Ok(bytes) = std::fs::read(path) {
+                if let Err(e) = zip.start_file(format!("{id}.png"), options) {
+                    error!("failed to add {id} to zip: {e}");
+                    continue;
+                }
+                if let Err(e) = zip.write_all(&bytes) {
+                    error!("failed to write {id} to zip: {e}");
+                }
+            } else {
+                error!("failed to read {id} for zip");
             }
         }
         zip.finish().map(|c| c.into_inner())

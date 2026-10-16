@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ t.app_title }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body
+    data-confirm-delete="{{ t.confirm_delete }}"
+    data-confirm-clear="{{ t.confirm_clear }}"
+    data-msg-generating="{{ t.msg_generating }}"
+    data-msg-generated="{{ t.msg_generated }}"
+    data-msg-deleted="{{ t.msg_deleted }}"
+    data-msg-cleared="{{ t.msg_cleared }}"
+    data-msg-error="{{ t.msg_error }}"
+    data-msg-invalid="{{ t.msg_invalid }}"
+>
+    <header class="topbar">
+        <span class="brand">{{ t.app_title }}</span>
+        <nav class="lang" aria-label="Language">
+            <button type="button" data-lang="pt-br"{% if lang == "pt-br" %} class="active"{% endif %}>PT</button>
+            <button type="button" data-lang="en"{% if lang == "en" %} class="active"{% endif %}>EN</button>
+        </nav>
+    </header>
+
+    <main class="container">
+        <p class="subtitle">{{ t.subtitle }}</p>
+
+        <form id="generateForm" class="controls">
+            <div class="control-group">
+                <label for="count">{{ t.count_label }}</label>
+                <input type="number" id="count" name="count" min="1" max="50" value="1" required>
+            </div>
+            <div class="control-group">
+                <label for="seed">{{ t.seed_label }}</label>
+                <input type="text" id="seed" name="seed" maxlength="128" placeholder="{{ t.seed_placeholder }}">
+            </div>
+            <div class="control-group">
+                <label for="set">{{ t.set_label }}</label>
+                <select id="set" name="set">
+                    <option value="set1">Set 1</option>
+                    <option value="set2">Set 2</option>
+                    <option value="set3">Set 3</option>
+                    <option value="set4">Set 4</option>
+                    <option value="set5">Set 5</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="background">{{ t.background_label }}</label>
+                <select id="background" name="background">
+                    <option value="bg1">BG 1</option>
+                    <option value="bg2">BG 2</option>
+                    <option value="none">{{ t.bg_none }}</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="size">{{ t.size_label }}</label>
+                <select id="size" name="size">
+                    <option value="50">50 x 50</option>
+                    <option value="100">100 x 100</option>
+                    <option value="200">200 x 200</option>
+                    <option value="300">300 x 300</option>
+                    <option value="400">400 x 400</option>
+                    <option value="500">500 x 500</option>
+                    <option value="640">640 x 640</option>
+                    <option value="800">800 x 800</option>
+                    <option value="1024">1024 x 1024</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="ttl_days">{{ t.ttl_label }}</label>
+                <input type="number" id="ttl_days" name="ttl_days" min="1" max="30" value="{{ default_ttl }}">
+            </div>
+        </form>
+
+        <div class="actions">
+            <button type="submit" id="generateBtn" form="generateForm">{{ t.generate_btn }}</button>
+            <button type="button" id="downloadAllBtn"{% if avatars.len() == 0 %} disabled{% endif %}>{{ t.download_all_btn }}</button>
+            <button type="button" id="clearAllBtn"{% if avatars.len() == 0 %} disabled{% endif %}>{{ t.clear_all_btn }}</button>
+        </div>
+
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+
+        <section id="gallery" class="gallery">
+            {% for avatar in avatars %}
+            <article class="avatar-card" data-id="{{ avatar.id }}">
+                <img src="/avatar/{{ avatar.id }}" alt="{{ t.avatar_alt }} {{ avatar.seed }}" loading="lazy" width="{{ avatar.size }}" height="{{ avatar.size }}">
+                <dl class="meta">
+                    <dt>{{ t.seed_label_short }}</dt>
+                    <dd title="{{ avatar.seed }}">{{ avatar.seed_short }}</dd>
+                    <dt>{{ t.set_label_short }}</dt>
+                    <dd>{{ avatar.set }}</dd>
+                    <dt>{{ t.bg_label_short }}</dt>
+                    <dd>{{ avatar.background }}</dd>
+                    <dt>{{ t.expires_label }}</dt>
+                    <dd>{{ avatar.expires_at }}</dd>
+                </dl>
+                <div class="card-actions">
+                    <a class="btn" href="/download/{{ avatar.id }}" download>{{ t.download }}</a>
+                    <button type="button" class="btn danger" data-delete="{{ avatar.id }}">{{ t.delete }}</button>
+                </div>
+            </article>
+            {% else %}
+            <p class="empty">{{ t.no_avatars }}</p>
+            {% endfor %}
+        </section>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+</body>
+</html>

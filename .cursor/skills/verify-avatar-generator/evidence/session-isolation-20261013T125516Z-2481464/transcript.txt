@@ -1,0 +1,9 @@
+feature=session-isolation origin=http://127.0.0.1:18100 run=20261013T125516Z-2481464
+bootstrapped two cookie jars
+session A POST /generate -> 200
+session B gallery does not list 808da491-880b-4971-9f25-bd5636c1904d
+session B DELETE /avatar/808da491-880b-4971-9f25-bd5636c1904d -> 404
+session A still owns 808da491-880b-4971-9f25-bd5636c1904d
+unauthenticated GET /avatar/808da491-880b-4971-9f25-bd5636c1904d -> 200 (expected 200; image proxy is id-based)
+session A POST /clear-all -> 200 body={"removed":1,"success":true}
+PASS evidence=/home/avell/.local/share/agents/eng-runs/jobs/avatar-rust/repo/.cursor/skills/verify-avatar-generator/evidence/session-isolation-20261013T125516Z-2481464

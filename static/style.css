@@ -1,0 +1,239 @@
+:root {
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --border: #dfe3ea;
+    --text: #1b2430;
+    --muted: #5c6b7a;
+    --accent: #2f6fed;
+    --accent-strong: #1f56c9;
+    --danger: #c0392b;
+    --danger-strong: #96291d;
+    --radius: 12px;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+}
+
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.brand {
+    font-weight: 700;
+    font-size: 18px;
+}
+
+.lang {
+    display: flex;
+    gap: 6px;
+}
+
+.lang button {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted);
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.lang button.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.container {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+.subtitle {
+    color: var(--muted);
+    margin-top: 0;
+}
+
+.controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 20px;
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+input,
+select {
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    background: #fff;
+    color: var(--text);
+    width: 100%;
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible,
+.btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+button,
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 18px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+button:hover:not(:disabled),
+.btn:hover {
+    background: var(--accent-strong);
+}
+
+button:disabled {
+    background: #c3cad6;
+    cursor: not-allowed;
+}
+
+button.danger,
+.btn.danger {
+    background: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+    background: var(--danger-strong);
+}
+
+.status {
+    min-height: 22px;
+    font-size: 14px;
+    color: var(--muted);
+    margin: 0 0 16px;
+}
+
+.status.error {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 18px;
+}
+
+.avatar-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.avatar-card img {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    background: #eef1f5;
+}
+
+.meta {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    margin: 0;
+    font-size: 12px;
+}
+
+.meta dt {
+    color: var(--muted);
+}
+
+.meta dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.card-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: auto;
+}
+
+.card-actions .btn,
+.card-actions button {
+    flex: 1;
+    padding: 8px 10px;
+    font-size: 13px;
+}
+
+.empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--muted);
+    padding: 40px;
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+}
+
+@media (max-width: 480px) {
+    .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

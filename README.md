@@ -50,12 +50,20 @@ All configuration is read from the environment.
 ## Docker
 
 ```bash
-docker build -t avatar-generator .
+mkdir -p $PWD/data && chown 10001:$PWD/data $PWD/data
 docker run --rm -p 8080:8080 -v "$PWD/data:/data" avatar-generator
 ```
 
-The image builds with `cargo-chef`, runs as a non-root user, ships `ca-certificates`,
-and exposes port `8080`.
+The image builds with `cargo-chef`, runs as a non-root user (UID 10001), ships
+`ca-certificates`, and exposes port `8080`. Creating the directory beforehand
+and chowning it to the image's user ensures the first `Store::save` can create
+the PNG and `index.json` without a 502 error.
+
+Alternatively, a named volume can be used:
+
+```bash
+docker run --rm -p 8080:8080 -v avatar-generator-data:/data avatar-generator
+```
 
 ## API
 

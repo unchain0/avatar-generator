@@ -289,21 +289,21 @@ pub async fn generate(
 
     struct ReservationGuard {
         session: String,
-        count: usize,
+        remaining: usize,
         store: std::sync::Arc<crate::store::Store>,
     }
     impl Drop for ReservationGuard {
         fn drop(&mut self) {
-            // Release any remaining pending slots. Each successful save above
-            // has already decremented the reservation, so this only releases
-            // the un-saved portion.
-            self.store.release_reservation(&self.session, self.count);
+            // Release only the slots that were not already transferred to
+            // completed via per-save decrements during the loop.
+            self.store
+                .release_reservation(&self.session, self.remaining);
         }
     }
 
-    let guard = ReservationGuard {
+    let mut guard = ReservationGuard {
         session: session.clone(),
-        count: validated.count as usize,
+        remaining: validated.count as usize,
         store: state.store.clone(),
     };
 
@@ -347,6 +347,7 @@ pub async fn generate(
                     Ok(()) => {
                         // Transfer one pending slot to "completed" as the avatar
                         // is now persisted.
+                        guard.remaining = guard.remaining.saturating_sub(1);
                         state.store.release_reservation(&session, 1);
                         results.push((index as usize, view));
                     }

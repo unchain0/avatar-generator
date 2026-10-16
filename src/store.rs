@@ -99,15 +99,27 @@ impl Store {
             return Ok(false);
         }
 
+        // Build the new index state (without the avatar) and persist it first,
+        // so that if persistence fails the file and in-memory index remain
+        // consistent (avatar still present in both). Only after the index is
+        // successfully written do we remove the PNG file.
         let mut next = guard.clone();
         next.remove(id);
 
+        if self.persist(&next).is_err() {
+            // Persistence failed — leave in-memory and on-disk index unchanged,
+            // and leave the PNG file in place. The operation is recoverable: the
+            // next cleanup or delete will find the avatar still present.
+            return Ok(false);
+        }
+
+        // Index persisted successfully — now remove the PNG file.
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e),
         }
-        self.persist(&next)?;
+
         *guard = next;
         Ok(true)
     }

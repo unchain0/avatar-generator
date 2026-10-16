@@ -294,6 +294,9 @@ pub async fn generate(
     }
     impl Drop for ReservationGuard {
         fn drop(&mut self) {
+            // Release any remaining pending slots. Each successful save above
+            // has already decremented the reservation, so this only releases
+            // the un-saved portion.
             self.store.release_reservation(&self.session, self.count);
         }
     }
@@ -306,6 +309,9 @@ pub async fn generate(
 
     let base_seed = validated.seed.clone().unwrap_or_else(random_base_seed);
     let options = validated.options;
+
+    let expires_at = Utc::now() + ChronoDuration::days(validated.ttl_days);
+    let mut results: Vec<(usize, AvatarView)> = Vec::new();
 
     let mut tasks = JoinSet::new();
     for index in 0..validated.count {
@@ -320,33 +326,41 @@ pub async fn generate(
         });
     }
 
-    let mut fetched = Vec::new();
+    // Drain tasks as they complete, saving each avatar immediately to avoid
+    // buffering all fetched bytes in memory concurrently. Decrement the
+    // pending reservation after each successful save so that concurrent
+    // requests in the same session are not spuriously rejected (the pending
+    // count reflects in-flight slots, not the full requested count).
     while let Some(joined) = tasks.join_next().await {
         match joined {
-            Ok((index, seed, Ok(bytes))) => fetched.push((index, seed, bytes)),
+            Ok((index, seed, Ok(bytes))) => {
+                let record = AvatarRecord {
+                    id: Uuid::new_v4().to_string(),
+                    seed,
+                    options,
+                    created_at: Utc::now(),
+                    expires_at,
+                    session_id: session.clone(),
+                };
+                let view = record.view();
+                match state.store.save(record, &bytes) {
+                    Ok(()) => {
+                        // Transfer one pending slot to "completed" as the avatar
+                        // is now persisted.
+                        state.store.release_reservation(&session, 1);
+                        results.push((index as usize, view));
+                    }
+                    Err(e) => error!("failed to persist avatar: {e}"),
+                }
+            }
             Ok((index, seed, Err(e))) => warn!("avatar {index} ({seed}) failed: {e}"),
             Err(e) => error!("avatar task panicked: {e}"),
         }
     }
-    fetched.sort_by_key(|(index, _, _)| *index);
 
-    let expires_at = Utc::now() + ChronoDuration::days(validated.ttl_days);
-    let mut avatars = Vec::with_capacity(fetched.len());
-    for (_, seed, bytes) in fetched {
-        let record = AvatarRecord {
-            id: Uuid::new_v4().to_string(),
-            seed,
-            options,
-            created_at: Utc::now(),
-            expires_at,
-            session_id: session.clone(),
-        };
-        let view = record.view();
-        match state.store.save(record, &bytes) {
-            Ok(()) => avatars.push(view),
-            Err(e) => error!("failed to persist avatar: {e}"),
-        }
-    }
+    results.sort_by_key(|(index, _)| *index);
+
+    let avatars = results.into_iter().map(|(_, v)| v).collect::<Vec<_>>();
 
     let _guard = guard;
 

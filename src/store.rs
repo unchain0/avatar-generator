@@ -93,7 +93,7 @@ impl Store {
                 let _ = self.persist(&guard);
                 let _ = std::fs::remove_file(&temp_path);
                 Err(io::Error::other(
-                    "rename failed after index persist; index rolled back"
+                    "rename failed after index persist; index rolled back",
                 ))
             }
         }

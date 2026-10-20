@@ -20,13 +20,90 @@ impl Store {
     pub fn new(data_dir: PathBuf) -> io::Result<Self> {
         std::fs::create_dir_all(&data_dir)?;
         let index_path = data_dir.join("index.json");
-        let records = load_index(&index_path)?;
-        Ok(Self {
+        let mut records = load_index(&index_path)?;
+        let store = Self {
             data_dir,
             index_path,
-            records: Mutex::new(records),
+            records: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
-        })
+        };
+        store.reconcile_on_startup(&mut records)?;
+        *store.lock() = records;
+        Ok(store)
+    }
+
+    /// Repair crash windows left by interrupted saves: finish pending renames,
+    /// drop index entries whose PNG never landed, and scrub orphan temps.
+    fn reconcile_on_startup(&self, records: &mut HashMap<String, AvatarRecord>) -> io::Result<()> {
+        let mut changed = false;
+        let mut drop_ids = Vec::new();
+
+        for id in records.keys().cloned().collect::<Vec<_>>() {
+            let Some(final_path) = self.image_path(&id) else {
+                drop_ids.push(id);
+                continue;
+            };
+            if final_path.exists() {
+                continue;
+            }
+            let temp_path = self.temp_image_path(&id);
+            if temp_path.exists() {
+                match std::fs::rename(&temp_path, &final_path) {
+                    Ok(()) => {}
+                    Err(_) => {
+                        let _ = std::fs::remove_file(&temp_path);
+                        drop_ids.push(id);
+                        changed = true;
+                    }
+                }
+            } else {
+                drop_ids.push(id);
+                changed = true;
+            }
+        }
+
+        for id in drop_ids {
+            records.remove(&id);
+            changed = true;
+        }
+
+        // Orphan temps that are not claimed by any remaining record.
+        if let Ok(entries) = std::fs::read_dir(&self.data_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    continue;
+                };
+                let Some(id) = name
+                    .strip_prefix(".tmp_")
+                    .and_then(|s| s.strip_suffix(".png"))
+                else {
+                    continue;
+                };
+                if records.contains_key(id) {
+                    // Record kept and still missing final PNG would have been
+                    // repaired above; leftover temp with a live final is junk.
+                    let Some(final_path) = self.image_path(id) else {
+                        let _ = std::fs::remove_file(entry.path());
+                        continue;
+                    };
+                    if final_path.exists() {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                    continue;
+                }
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+
+        if changed {
+            self.persist(records)?;
+        }
+        Ok(())
+    }
+
+    fn temp_image_path(&self, id: &str) -> PathBuf {
+        self.data_dir.join(format!(".tmp_{id}.png"))
     }
 
     pub fn data_dir(&self) -> &Path {
@@ -54,7 +131,7 @@ impl Store {
             .image_path(&record.id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid avatar id"))?;
 
-        let temp_path = self.data_dir.join(format!(".tmp_{}.png", record.id));
+        let temp_path = self.temp_image_path(&record.id);
 
         let mut guard = self.lock();
         let mut next = guard.clone();
@@ -71,16 +148,13 @@ impl Store {
         let avatar_id = record.id.clone();
         next.insert(avatar_id.clone(), record);
 
-        // Write the PNG to a temporary path first so we can clean up on index failure.
         std::fs::write(&temp_path, bytes)?;
 
-        // Persist the index first. On failure, remove the temp PNG and return error.
         if self.persist(&next).is_err() {
             let _ = std::fs::remove_file(&temp_path);
             return Err(io::Error::other("index persist failed; PNG removed"));
         }
 
-        // Index succeeded — move the temp PNG to its final location.
         match std::fs::rename(&temp_path, &path) {
             Ok(()) => {
                 *guard = next;
@@ -89,8 +163,8 @@ impl Store {
             Err(_e) => {
                 // Rename failed after index persisted — roll back the index
                 // on disk and in memory so the gallery does not render a broken card.
-                guard.remove(&avatar_id);
-                let _ = self.persist(&guard);
+                next.remove(&avatar_id);
+                let _ = self.persist(&next);
                 let _ = std::fs::remove_file(&temp_path);
                 Err(io::Error::other(
                     "rename failed after index persist; index rolled back",
@@ -124,28 +198,19 @@ impl Store {
             return Ok(false);
         }
 
-        // Build the new index state (without the avatar) and persist it first,
-        // so that if persistence fails the file and in-memory index remain
-        // consistent (avatar still present in both). Only after the index is
-        // successfully written do we remove the PNG file.
         let mut next = guard.clone();
         next.remove(id);
 
         if self.persist(&next).is_err() {
-            // Persistence failed — leave in-memory and on-disk index unchanged,
-            // and leave the PNG file in place. The operation is recoverable: the
-            // next cleanup or delete will find the avatar still present.
             return Ok(false);
         }
 
-        // Index persisted successfully — now remove the PNG file.
-        match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
-        }
-
+        // Index and memory stay aligned even if the file unlink fails; an
+        // orphan PNG is preferred over resurrecting a deleted record later.
         *guard = next;
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(self.temp_image_path(id));
+
         Ok(true)
     }
 
@@ -213,24 +278,14 @@ impl Store {
         let mut next = guard.clone();
         next.retain(|_, r| r.session_id != session_id);
 
-        // Persist the proposed index first, so that if it fails the old index
-        // still reflects the current on-disk state and no PNGs have been deleted yet.
         if self.persist(&next).is_err() {
             return Err(io::Error::other("index persist failed; no files deleted"));
         }
 
-        // Index persisted successfully — now remove the PNG files.
-        for id in &ids {
-            if let Some(path) = self.image_path(id) {
-                match std::fs::remove_file(path) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(e),
-                }
-            }
-        }
-
+        // Commit memory as soon as the index is durable so a later PNG unlink
+        // failure cannot resurrect a cleared session via a subsequent save.
         *guard = next;
+        self.remove_image_files(&ids);
         Ok(ids.len())
     }
 
@@ -249,25 +304,22 @@ impl Store {
         let mut next = guard.clone();
         next.retain(|_, r| r.expires_at > now);
 
-        // Persist the index first, so that if it fails the old index still reflects
-        // the current on-disk state and no PNGs have been deleted yet.
         if self.persist(&next).is_err() {
             return Err(io::Error::other("index persist failed; no files deleted"));
         }
 
-        // Index persisted successfully — now remove the PNG files.
-        for id in &expired {
-            if let Some(path) = self.image_path(id) {
-                match std::fs::remove_file(path) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(e),
-                }
-            }
-        }
-
         *guard = next;
+        self.remove_image_files(&expired);
         Ok(expired.len())
+    }
+
+    fn remove_image_files(&self, ids: &[String]) {
+        for id in ids {
+            if let Some(path) = self.image_path(id) {
+                let _ = std::fs::remove_file(path);
+            }
+            let _ = std::fs::remove_file(self.temp_image_path(id));
+        }
     }
 }
 
@@ -492,5 +544,112 @@ mod tests {
         assert_eq!(list[0].id, ID_B);
         assert_eq!(list[1].id, ID_A);
         assert_eq!(store.count_session("s"), 2);
+    }
+
+    /// After the cleared index is durable, memory must match it even if a PNG
+    /// unlink fails — otherwise a later save rewrites the stale map and
+    /// resurrects a partial gallery.
+    #[test]
+    fn clear_session_commits_memory_before_file_unlink() {
+        let dir = tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        let future = Utc::now() + chrono::Duration::days(1);
+
+        store
+            .save(record(ID_A, "session-a", future), b"a1")
+            .unwrap();
+        store
+            .save(record(ID_B, "session-a", future), b"a2")
+            .unwrap();
+
+        // Replace PNGs with non-empty directories so unlink fails.
+        for id in [ID_A, ID_B] {
+            let path = store.image_path(id).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            std::fs::create_dir(&path).unwrap();
+            std::fs::write(path.join("keep"), b"x").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o555)).unwrap();
+            }
+        }
+
+        let removed = store.clear_session("session-a").unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(store.list_session("session-a").len(), 0);
+
+        store
+            .save(record(ID_C, "session-b", future), b"b1")
+            .unwrap();
+        assert!(store.get(ID_A).is_none());
+        assert!(store.get(ID_B).is_none());
+        assert!(store.get(ID_C).is_some());
+
+        let reopened = Store::new(dir.path().to_path_buf()).unwrap();
+        assert!(reopened.get(ID_A).is_none());
+        assert!(reopened.get(ID_B).is_none());
+        assert!(reopened.get(ID_C).is_some());
+
+        for id in [ID_A, ID_B] {
+            let path = store.image_path(id).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
+            }
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+
+    /// Crash between index persist and final PNG rename: on reopen the temp
+    /// file is promoted so the gallery does not serve a broken card.
+    #[test]
+    fn startup_recovers_pending_temp_png() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let future = Utc::now() + chrono::Duration::days(1);
+
+        {
+            let store = Store::new(path.clone()).unwrap();
+            store.save(record(ID_A, "s1", future), b"png-a").unwrap();
+        }
+
+        let final_png = path.join(format!("{ID_A}.png"));
+        let temp_png = path.join(format!(".tmp_{ID_A}.png"));
+        std::fs::rename(&final_png, &temp_png).unwrap();
+        assert!(!final_png.exists());
+        assert!(temp_png.exists());
+
+        let recovered = Store::new(path).unwrap();
+        assert!(recovered.get(ID_A).is_some());
+        assert_eq!(recovered.read_image(ID_A).unwrap().unwrap(), b"png-a");
+        assert!(final_png.exists());
+        assert!(!temp_png.exists());
+    }
+
+    /// Crash with index entry but neither final nor temp PNG drops the record.
+    #[test]
+    fn startup_drops_index_entry_without_png() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let future = Utc::now() + chrono::Duration::days(1);
+
+        {
+            let store = Store::new(path.clone()).unwrap();
+            store.save(record(ID_A, "s1", future), b"png-a").unwrap();
+        }
+
+        std::fs::remove_file(path.join(format!("{ID_A}.png"))).unwrap();
+
+        let recovered = Store::new(path.clone()).unwrap();
+        assert!(recovered.get(ID_A).is_none());
+
+        std::fs::write(path.join(format!(".tmp_{ID_B}.png")), b"orphan").unwrap();
+        let scrubbed = Store::new(path).unwrap();
+        assert!(!scrubbed
+            .data_dir()
+            .join(format!(".tmp_{ID_B}.png"))
+            .exists());
     }
 }

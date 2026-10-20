@@ -164,7 +164,7 @@ fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
 }
 
 fn session_id(headers: &HeaderMap) -> String {
-    cookie_value(headers, SESSION_COOKIE).unwrap_or_else(|| Uuid::new_v4().to_string())
+    cookie_value(headers, SESSION_COOKIE).unwrap_or_else(|| Uuid::now_v7().to_string())
 }
 
 fn lang(headers: &HeaderMap) -> Lang {
@@ -335,7 +335,7 @@ pub async fn generate(
         match joined {
             Ok((index, seed, Ok(bytes))) => {
                 let record = AvatarRecord {
-                    id: Uuid::new_v4().to_string(),
+                    id: Uuid::now_v7().to_string(),
                     seed,
                     options,
                     created_at: Utc::now(),

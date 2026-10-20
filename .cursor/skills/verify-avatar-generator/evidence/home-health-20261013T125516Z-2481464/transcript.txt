@@ -1,0 +1,6 @@
+feature=home-health origin=http://127.0.0.1:18100 run=20261013T125516Z-2481464
+GET /healthz -> 200 body=ok
+GET / -> 200
+GET /static/app.js -> 200
+GET /static/style.css -> 200
+PASS evidence=/home/avell/.local/share/agents/eng-runs/jobs/avatar-rust/repo/.cursor/skills/verify-avatar-generator/evidence/home-health-20261013T125516Z-2481464

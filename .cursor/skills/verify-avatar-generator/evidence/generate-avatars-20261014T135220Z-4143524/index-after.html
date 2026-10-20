@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gerador de Avatares RoboHash</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body
+    data-confirm-delete="Excluir este avatar?"
+    data-confirm-clear="Limpar todos os avatares desta sessão? Isso não pode ser desfeito."
+    data-msg-generating="Gerando avatares..."
+    data-msg-generated="Avatares gerados."
+    data-msg-deleted="Avatar excluído."
+    data-msg-cleared="Sessão limpa."
+    data-msg-error="Algo deu errado. Tente novamente."
+    data-msg-invalid="Informe uma quantidade entre 1 e 50."
+>
+    <header class="topbar">
+        <span class="brand">Gerador de Avatares RoboHash</span>
+        <nav class="lang" aria-label="Language">
+            <button type="button" data-lang="pt-br" class="active">PT</button>
+            <button type="button" data-lang="en">EN</button>
+        </nav>
+    </header>
+
+    <main class="container">
+        <p class="subtitle">Gere avatares de robô a partir de uma biblioteca RoboHash com seed.</p>
+
+        <form id="generateForm" class="controls">
+            <div class="control-group">
+                <label for="count">Quantidade (1-50)</label>
+                <input type="number" id="count" name="count" min="1" max="50" value="1" required>
+            </div>
+            <div class="control-group">
+                <label for="seed">Seed personalizada (opcional)</label>
+                <input type="text" id="seed" name="seed" maxlength="128" placeholder="Deixe em branco para uma seed aleatória">
+            </div>
+            <div class="control-group">
+                <label for="set">Conjunto</label>
+                <select id="set" name="set">
+                    <option value="set1">Set 1</option>
+                    <option value="set2">Set 2</option>
+                    <option value="set3">Set 3</option>
+                    <option value="set4">Set 4</option>
+                    <option value="set5">Set 5</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="background">Fundo</label>
+                <select id="background" name="background">
+                    <option value="bg1">BG 1</option>
+                    <option value="bg2">BG 2</option>
+                    <option value="none">Nenhum</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="size">Tamanho</label>
+                <select id="size" name="size">
+                    <option value="50">50 x 50</option>
+                    <option value="100">100 x 100</option>
+                    <option value="200">200 x 200</option>
+                    <option value="300">300 x 300</option>
+                    <option value="400">400 x 400</option>
+                    <option value="500">500 x 500</option>
+                    <option value="640">640 x 640</option>
+                    <option value="800">800 x 800</option>
+                    <option value="1024">1024 x 1024</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="ttl_days">Expira em (dias)</label>
+                <input type="number" id="ttl_days" name="ttl_days" min="1" max="30" value="1">
+            </div>
+        </form>
+
+        <div class="actions">
+            <button type="submit" id="generateBtn" form="generateForm">Gerar</button>
+            <button type="button" id="downloadAllBtn">Baixar tudo (ZIP)</button>
+            <button type="button" id="clearAllBtn">Limpar tudo</button>
+        </div>
+
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+
+        <section id="gallery" class="gallery">
+            
+            <article class="avatar-card" data-id="ab14d397-51e1-49a4-8aa7-961c6b3fa2e3">
+                <img src="/avatar/ab14d397-51e1-49a4-8aa7-961c6b3fa2e3" alt="Avatar a755ad87c6c55ddcff814a5544f7309a6b5dc5bf39fdeabbbcbfd17cbcd6e1a5" loading="lazy" width="100" height="100">
+                <dl class="meta">
+                    <dt>Seed</dt>
+                    <dd title="a755ad87c6c55ddcff814a5544f7309a6b5dc5bf39fdeabbbcbfd17cbcd6e1a5">a755ad87c6c55ddc</dd>
+                    <dt>Conjunto</dt>
+                    <dd>set2</dd>
+                    <dt>Fundo</dt>
+                    <dd>bg1</dd>
+                    <dt>Expira</dt>
+                    <dd>2026-10-15T13:52:26Z</dd>
+                </dl>
+                <div class="card-actions">
+                    <a class="btn" href="/download/ab14d397-51e1-49a4-8aa7-961c6b3fa2e3" download>Baixar</a>
+                    <button type="button" class="btn danger" data-delete="ab14d397-51e1-49a4-8aa7-961c6b3fa2e3">Excluir</button>
+                </div>
+            </article>
+            
+            <article class="avatar-card" data-id="a4e297e7-3dfe-424d-81ed-77a2166ca400">
+                <img src="/avatar/a4e297e7-3dfe-424d-81ed-77a2166ca400" alt="Avatar 583681a7d3bce3e0a0e074cd32accba443c3e0fda0b26cc0eafcbdfec88146e2" loading="lazy" width="100" height="100">
+                <dl class="meta">
+                    <dt>Seed</dt>
+                    <dd title="583681a7d3bce3e0a0e074cd32accba443c3e0fda0b26cc0eafcbdfec88146e2">583681a7d3bce3e0</dd>
+                    <dt>Conjunto</dt>
+                    <dd>set2</dd>
+                    <dt>Fundo</dt>
+                    <dd>bg1</dd>
+                    <dt>Expira</dt>
+                    <dd>2026-10-15T13:52:26Z</dd>
+                </dl>
+                <div class="card-actions">
+                    <a class="btn" href="/download/a4e297e7-3dfe-424d-81ed-77a2166ca400" download>Baixar</a>
+                    <button type="button" class="btn danger" data-delete="a4e297e7-3dfe-424d-81ed-77a2166ca400">Excluir</button>
+                </div>
+            </article>
+            
+        </section>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+</body>
+</html>

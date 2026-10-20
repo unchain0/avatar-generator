@@ -1,68 +1,108 @@
 # Avatar Generator
 
-A simple Python script to generate unique robot avatars using the [RoboHash API](https://robohash.org/) and save them locally. It includes features for generating multiple avatars and setting an expiration time for automatic cleanup.
+A fullstack Rust web app that generates seeded robot avatars from the
+[RoboHash](https://robohash.org/) library and serves them from your own domain.
+
+The server renders the gallery with [askama](https://crates.io/crates/askama),
+proxies and caches every avatar under `DATA_DIR`, and never loads assets from a
+CDN. The UI ships in Portuguese (pt-BR, default) and English (en).
 
 ## Features
 
-- Generate unique avatars based on random strings.
-- Specify the number of avatars to generate.
-- Specify a custom output directory.
-- Set an expiration duration (in days) for generated avatars.
-- Automatic cleanup of expired avatars upon running the script.
+- Generate 1 to 50 avatars per batch from a custom seed or a random SHA-256 seed.
+- Choose the RoboHash set (`set1`..`set5`), background (`bg1`, `bg2`, or none),
+  and size (50 to 1024).
+- Gallery per browser session, with per-avatar download and a "download all" ZIP.
+- Per-session "clear all" and per-avatar delete.
+- Server-side proxy and cache with an upstream timeout and a concurrency limit.
+- Per-IP rate limit on generation.
+- Expiring avatars: each batch gets a TTL in days; a background task deletes
+  expired files every 10 minutes.
+- `GET /healthz` returns `200 ok` for probes.
 
-## Installation
+## Requirements
 
-1. **Clone the repository:**
+- Rust stable (1.80+).
+- Network access to `https://robohash.org` at runtime (or point `ROBOHASH_BASE_URL`
+  at a compatible server).
 
-    ```bash
-    git clone https://github.com/unchain0/avatar-generator
-    cd avatar-generator
-    ```
-
-2. **Install dependencies:**
-    This project uses Poetry for dependency management.
-
-    ```bash
-    poetry install
-    ```
-
-    Alternatively, if you have the dependencies (`requests`, `tqdm`) installed globally or in a virtual environment, you might be able to run it directly.
-
-## Usage
-
-Run the script from the root directory using Python:
+## Run locally
 
 ```bash
-python main.py [OPTIONS]
+PORT=8080 DATA_DIR=./data RUST_LOG=info cargo run
 ```
 
-**Options:**
+Open <http://localhost:8080>, pick your options, and press **Gerar**.
 
-- `-n NUMBER`, `--number NUMBER`: Number of avatars to generate (default: 1).
-- `-o DIRECTORY`, `--output DIRECTORY`: Output directory for avatars (default: `avatars`).
-- `--expires-in DAYS`: Set an expiration time in days for the generated avatars. Expired avatars are deleted the next time the script runs based on this value (default: 1 day). This is ignored if `--cleanup-all` is used for the cleanup phase.
-- `--cleanup-all`: If present, delete ALL existing avatars in the output directory and clear the tracking file *before* generating new ones.
+## Configuration
 
-**Examples:**
+All configuration is read from the environment.
 
-- Generate 5 avatars in the default `avatars` directory, expiring in 7 days:
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `8080` | HTTP listen port. |
+| `DATA_DIR` | `./data` | Directory for cached avatars and the session index. |
+| `STATIC_DIR` | `./static` | Directory served under `/static`. |
+| `ROBOHASH_BASE_URL` | `https://robohash.org` | Upstream avatar base URL. |
+| `TTL_DAYS` | `1` | Default avatar lifetime in days (1..30). |
+| `RUST_LOG` | `info` | `tracing` filter, for example `avatar_generator=debug`. |
 
-    ```bash
-    python main.py -n 5 --expires-in 7
-    ```
+## Docker
 
-- Generate 1 avatar in a custom directory `my_robots`, with default expiration (1 day):
+```bash
+mkdir -p $PWD/data
+# chown requires host root privileges (uses sudo, or initialize inside the container)
+sudo chown 10001:10001 $PWD/data
+docker run --rm -p 8080:8080 -v "$PWD/data:/data" avatar-generator
+```
 
-    ```bash
-    python main.py -o my_robots
-    ```
+The image builds with `cargo-chef`, runs as a non-root user (UID 10001), ships
+`ca-certificates`, and exposes port `8080`. Creating the directory beforehand
+and chowning it to the image's user ensures the first `Store::save` can create
+the PNG and `index.json` without a 502 error. If you do not have host root,
+use `sudo` for the `chown` step or initialize the mount inside a throwaway
+root container before starting the server:
 
-- Generate 10 avatars, but first delete all existing avatars in the `avatars` directory:
+```bash
+docker run --rm -v "$PWD/data:/data" busybox sh -c 'chown 10001:10001 /data'
+docker run --rm -p 8080:8080 -v "$PWD/data:/data" avatar-generator
+```
 
-    ```bash
-    python main.py -n 10 --cleanup-all
-    ```
+Alternatively, a named volume can be used:
 
-## How Expiration Works
+```bash
+docker run --rm -p 8080:8080 -v avatar-generator-data:/data avatar-generator
+```
 
-When you use the `--expires-in` option, the script records the file path and its expiration date in a `.avatar_expiry.pkl` file in the project root. Each time the script runs, it first checks this file and deletes any avatars whose expiration date has passed.
+## API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/healthz` | Liveness probe, returns `ok`. |
+| `GET` | `/` | Rendered gallery for the current session. |
+| `POST` | `/generate` | Generate a batch. JSON: `count`, `seed`, `set`, `background`, `size`, `ttl_days`. |
+| `GET` | `/avatar/:id` | Cached PNG for an avatar. |
+| `GET` | `/download/:id` | Download a single PNG. |
+| `DELETE` | `/avatar/:id` | Delete an avatar owned by the session. |
+| `GET` | `/download-all` | ZIP of the session's avatars. |
+| `POST` | `/clear-all` | Delete every avatar in the session. |
+
+Example:
+
+```bash
+curl -X POST http://localhost:8080/generate \
+  -H 'content-type: application/json' \
+  -d '{"count":3,"seed":"hello","set":"set2","background":"bg1","size":200,"ttl_days":1}'
+```
+
+## Development
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+Unit tests cover seed hashing, request validation, and expiry cleanup with a
+temporary directory. Integration tests drive the real Axum router against a
+`wiremock` fake upstream, so tests never call RoboHash.

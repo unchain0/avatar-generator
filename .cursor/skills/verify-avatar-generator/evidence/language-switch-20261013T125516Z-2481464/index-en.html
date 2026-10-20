@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RoboHash Avatar Generator</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body
+    data-confirm-delete="Delete this avatar?"
+    data-confirm-clear="Clear all avatars in this session? This cannot be undone."
+    data-msg-generating="Generating avatars..."
+    data-msg-generated="Avatars generated."
+    data-msg-deleted="Avatar deleted."
+    data-msg-cleared="Session cleared."
+    data-msg-error="Something went wrong. Please try again."
+    data-msg-invalid="Enter a count between 1 and 50."
+>
+    <header class="topbar">
+        <span class="brand">RoboHash Avatar Generator</span>
+        <nav class="lang" aria-label="Language">
+            <button type="button" data-lang="pt-br">PT</button>
+            <button type="button" data-lang="en" class="active">EN</button>
+        </nav>
+    </header>
+
+    <main class="container">
+        <p class="subtitle">Generate robot avatars from a seeded RoboHash library.</p>
+
+        <form id="generateForm" class="controls">
+            <div class="control-group">
+                <label for="count">Count (1-50)</label>
+                <input type="number" id="count" name="count" min="1" max="50" value="1" required>
+            </div>
+            <div class="control-group">
+                <label for="seed">Custom seed (optional)</label>
+                <input type="text" id="seed" name="seed" maxlength="128" placeholder="Leave blank for a random seed">
+            </div>
+            <div class="control-group">
+                <label for="set">Set</label>
+                <select id="set" name="set">
+                    <option value="set1">Set 1</option>
+                    <option value="set2">Set 2</option>
+                    <option value="set3">Set 3</option>
+                    <option value="set4">Set 4</option>
+                    <option value="set5">Set 5</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="background">Background</label>
+                <select id="background" name="background">
+                    <option value="bg1">BG 1</option>
+                    <option value="bg2">BG 2</option>
+                    <option value="none">None</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="size">Size</label>
+                <select id="size" name="size">
+                    <option value="50">50 x 50</option>
+                    <option value="100">100 x 100</option>
+                    <option value="200">200 x 200</option>
+                    <option value="300">300 x 300</option>
+                    <option value="400">400 x 400</option>
+                    <option value="500">500 x 500</option>
+                    <option value="640">640 x 640</option>
+                    <option value="800">800 x 800</option>
+                    <option value="1024">1024 x 1024</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="ttl_days">Expires in (days)</label>
+                <input type="number" id="ttl_days" name="ttl_days" min="1" max="30" value="1">
+            </div>
+        </form>
+
+        <div class="actions">
+            <button type="submit" id="generateBtn" form="generateForm">Generate</button>
+            <button type="button" id="downloadAllBtn" disabled>Download all (ZIP)</button>
+            <button type="button" id="clearAllBtn" disabled>Clear all</button>
+        </div>
+
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+
+        <section id="gallery" class="gallery">
+            
+            <p class="empty">No avatars yet. Generate a batch to get started.</p>
+            
+        </section>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+</body>
+</html>

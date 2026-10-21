@@ -104,6 +104,8 @@ pub async fn fetch_avatar(client: &reqwest::Client, url: &str) -> Result<Vec<u8>
 mod tests {
     use super::*;
     use crate::models::{Background, RoboSet};
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn url_includes_set_and_size() {
@@ -135,5 +137,114 @@ mod tests {
         assert!(validate_image(&PNG_SIGNATURE).is_ok());
         assert!(validate_image(b"<html>oops</html>").is_err());
         assert!(validate_image(b"").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_too_large() {
+        let large = vec![0u8; MAX_AVATAR_BYTES + 1];
+        assert!(validate_image(&large).is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(PNG_SIGNATURE),
+            )
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = fetch_avatar(&client, &server.uri()).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PNG_SIGNATURE.to_vec());
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_rejects_non_success_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = fetch_avatar(&client, &server.uri()).await;
+        assert!(matches!(result, Err(UpstreamError::Status(404))));
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_rejects_non_png_content_type() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string("<html>oops</html>"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = fetch_avatar(&client, &server.uri()).await;
+        assert!(matches!(result, Err(UpstreamError::NotAnImage)));
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_rejects_stream_exceeding_limit() {
+        let server = MockServer::start().await;
+        let mut body = Vec::with_capacity(MAX_AVATAR_BYTES + 100);
+        body.extend_from_slice(&PNG_SIGNATURE);
+        body.resize(MAX_AVATAR_BYTES + 100, 0);
+
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(body),
+            )
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = fetch_avatar(&client, &server.uri()).await;
+        assert!(matches!(result, Err(UpstreamError::TooLarge)));
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_rejects_empty_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(vec![]),
+            )
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = fetch_avatar(&client, &server.uri()).await;
+        assert!(matches!(result, Err(UpstreamError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_rejects_invalid_png_signature() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_string("not a png"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = fetch_avatar(&client, &server.uri()).await;
+        assert!(matches!(result, Err(UpstreamError::NotAnImage)));
     }
 }

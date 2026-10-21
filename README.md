@@ -1,5 +1,13 @@
 # Avatar Generator
 
+**Objective:** Self-hosted robot avatar generator using RoboHash with session galleries, downloads, and expiry.
+
+**Status:** Active
+
+**Public URL:** https://avatar.unchain0.com
+
+---
+
 A fullstack Rust web app that generates seeded robot avatars from the
 [RoboHash](https://robohash.org/) library and serves them from your own domain.
 

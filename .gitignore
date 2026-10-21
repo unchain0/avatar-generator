@@ -1,6 +1,8 @@
 # Rust
 /target
 **/*.rs.bk
+lcov.info
+coverage-summary.json
 
 # Runtime data (cached avatars + index)
 /data

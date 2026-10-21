@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use tokio::task::JoinSet;
 use tracing::{error, warn};
 use uuid::Uuid;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
 const SESSION_COOKIE: &str = "avatar_session_id";
@@ -479,7 +479,7 @@ pub async fn download_all(State(state): State<AppState>, headers: HeaderMap) -> 
     let result = tokio::task::spawn_blocking(move || {
         let cursor = Cursor::new(Vec::new());
         let mut zip = zip::ZipWriter::new(cursor);
-        let options = FileOptions::default().compression_method(CompressionMethod::Stored);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
         for (id, path) in &ids_and_paths {
             if let Ok(bytes) = std::fs::read(path) {

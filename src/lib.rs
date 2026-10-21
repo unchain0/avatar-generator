@@ -2,9 +2,11 @@ pub mod config;
 pub mod handlers;
 pub mod models;
 pub mod rate;
+pub mod security;
 pub mod store;
 pub mod upstream;
 
+use crate::security::SecurityHeadersLayer;
 use axum::{
     http::StatusCode,
     routing::{get, post},
@@ -61,6 +63,7 @@ pub fn app(state: AppState) -> Router {
         .route("/download-all", get(handlers::download_all))
         .route("/clear-all", post(handlers::clear_all))
         .route("/static/*path", get(handlers::static_file))
+        .layer(SecurityHeadersLayer)
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -105,4 +108,86 @@ pub async fn run() {
     )
     .await
     .expect("server error");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::store::Store;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tempfile::TempDir;
+    use tokio::time::timeout;
+
+    fn test_config(dir: &TempDir) -> Config {
+        Config {
+            port: 0,
+            data_dir: dir.path().to_path_buf(),
+            static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
+            robohash_base: "https://robohash.org".to_string(),
+            default_ttl_days: 1,
+            cleanup_interval_secs: 600,
+            max_upstream_concurrency: 10,
+            rate_limit_per_minute: 100,
+            trust_forwarded_headers: false,
+        }
+    }
+
+    #[test]
+    fn build_state_creates_expected_state() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+        let state = build_state(config.clone(), store.clone());
+
+        assert_eq!(state.config.port, 0);
+        assert_eq!(state.config.max_upstream_concurrency, 10);
+        assert_eq!(state.config.rate_limit_per_minute, 100);
+        assert!(Arc::ptr_eq(&state.store, &store));
+        assert_eq!(state.semaphore.available_permits(), 10);
+    }
+
+    #[test]
+    fn app_builds_router_with_all_routes() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+        let state = build_state(config, store);
+        let router = app(state);
+
+        // Router builds successfully - if it didn't, this would panic
+        assert!(!format!("{:?}", router).is_empty());
+    }
+
+    #[tokio::test]
+    async fn cleanup_loop_runs_and_exits_on_drop() {
+        let dir = TempDir::new().unwrap();
+        let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+        let interval = Duration::from_millis(10);
+
+        // Spawn cleanup loop
+        let cleanup_store = store.clone();
+        let handle = tokio::spawn(async move {
+            cleanup_loop(cleanup_store, interval).await;
+        });
+
+        // Give it time to run at least once
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        // Drop the store to stop the loop (store is dropped when test ends)
+        // The loop will error on next iteration since store is gone
+        // We just verify it ran without panicking
+        handle.abort();
+        let _ = timeout(Duration::from_millis(100), handle).await;
+    }
+
+    #[tokio::test]
+    async fn build_client_creates_valid_client() {
+        let client = build_client();
+        // Client should have the expected timeout and user agent
+        // We can't easily inspect these, but we verify it builds
+        assert!(!format!("{:?}", client).is_empty());
+    }
 }

@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use tokio::task::JoinSet;
 use tracing::{error, warn};
 use uuid::Uuid;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
 const SESSION_COOKIE: &str = "avatar_session_id";
@@ -29,7 +29,7 @@ const LANG_COOKIE: &str = "lang";
 const DEFAULT_LANG: &str = "pt-br";
 const SESSION_COOKIE_MAX_AGE: i64 = crate::models::MAX_TTL_DAYS * 24 * 60 * 60;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Lang {
     PtBr,
     En,
@@ -112,10 +112,10 @@ fn texts(lang: Lang) -> Texts {
         },
         Lang::PtBr => Texts {
             app_title: "Gerador de Avatares RoboHash",
-            subtitle: "Gere avatares de robô a partir de uma biblioteca RoboHash com seed.",
+            subtitle: "Gere avatares de rob\u{f4} a partir de uma biblioteca RoboHash com seed.",
             count_label: "Quantidade (1-50)",
             seed_label: "Seed personalizada (opcional)",
-            seed_placeholder: "Deixe em branco para uma seed aleatória",
+            seed_placeholder: "Deixe em branco para uma seed aleat\u{f3}ria",
             set_label: "Conjunto",
             background_label: "Fundo",
             bg_none: "Nenhum",
@@ -124,7 +124,7 @@ fn texts(lang: Lang) -> Texts {
             generate_btn: "Gerar",
             download_all_btn: "Baixar tudo (ZIP)",
             clear_all_btn: "Limpar tudo",
-            no_avatars: "Nenhum avatar ainda. Gere um lote para começar.",
+            no_avatars: "Nenhum avatar ainda. Gere um lote para come\u{e7}ar.",
             avatar_alt: "Avatar",
             seed_label_short: "Seed",
             set_label_short: "Conjunto",
@@ -133,11 +133,12 @@ fn texts(lang: Lang) -> Texts {
             download: "Baixar",
             delete: "Excluir",
             confirm_delete: "Excluir este avatar?",
-            confirm_clear: "Limpar todos os avatares desta sessão? Isso não pode ser desfeito.",
+            confirm_clear:
+                "Limpar todos os avatares desta sess\u{e3}o? Isso n\u{e3}o pode ser desfeito.",
             msg_generating: "Gerando avatares...",
             msg_generated: "Avatares gerados.",
-            msg_deleted: "Avatar excluído.",
-            msg_cleared: "Sessão limpa.",
+            msg_deleted: "Avatar exclu\u{ed}do.",
+            msg_cleared: "Sess\u{e3}o limpa.",
             msg_error: "Algo deu errado. Tente novamente.",
             msg_invalid: "Informe uma quantidade entre 1 e 50.",
         },
@@ -294,8 +295,6 @@ pub async fn generate(
     }
     impl Drop for ReservationGuard {
         fn drop(&mut self) {
-            // Release only the slots that were not already transferred to
-            // completed via per-save decrements during the loop.
             self.store
                 .release_reservation(&self.session, self.remaining);
         }
@@ -326,11 +325,6 @@ pub async fn generate(
         });
     }
 
-    // Drain tasks as they complete, saving each avatar immediately to avoid
-    // buffering all fetched bytes in memory concurrently. Decrement the
-    // pending reservation after each successful save so that concurrent
-    // requests in the same session are not spuriously rejected (the pending
-    // count reflects in-flight slots, not the full requested count).
     while let Some(joined) = tasks.join_next().await {
         match joined {
             Ok((index, seed, Ok(bytes))) => {
@@ -345,8 +339,6 @@ pub async fn generate(
                 let view = record.view();
                 match state.store.save(record, &bytes) {
                     Ok(()) => {
-                        // Transfer one pending slot to "completed" as the avatar
-                        // is now persisted.
                         guard.remaining = guard.remaining.saturating_sub(1);
                         state.store.release_reservation(&session, 1);
                         results.push((index as usize, view));
@@ -459,8 +451,6 @@ pub async fn download_all(State(state): State<AppState>, headers: HeaderMap) -> 
         return (StatusCode::NOT_FOUND, "no avatars in this session").into_response();
     }
 
-    // Collect (id, path) pairs and compute total size via file metadata.
-    // This avoids reading all avatar bytes into memory before ZIP construction.
     let mut total_size: usize = 0;
     let mut ids_and_paths: Vec<(String, PathBuf)> = Vec::with_capacity(records.len());
     for record in &records {
@@ -489,7 +479,7 @@ pub async fn download_all(State(state): State<AppState>, headers: HeaderMap) -> 
     let result = tokio::task::spawn_blocking(move || {
         let cursor = Cursor::new(Vec::new());
         let mut zip = zip::ZipWriter::new(cursor);
-        let options = FileOptions::default().compression_method(CompressionMethod::Stored);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
         for (id, path) in &ids_and_paths {
             if let Ok(bytes) = std::fs::read(path) {
@@ -554,5 +544,131 @@ pub async fn static_file(
             error!("failed to read static file {}: {e}", file_path.display());
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    #[test]
+    fn cookie_value_returns_none_when_no_cookie_header() {
+        let headers = HeaderMap::new();
+        assert_eq!(cookie_value(&headers, "test"), None);
+    }
+
+    #[test]
+    fn cookie_value_returns_none_when_cookie_not_found() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static("other=value"));
+        assert_eq!(cookie_value(&headers, "test"), None);
+    }
+
+    #[test]
+    fn cookie_value_returns_value_when_found() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cookie",
+            HeaderValue::from_static("test=value123; other=value"),
+        );
+        assert_eq!(cookie_value(&headers, "test"), Some("value123".to_string()));
+    }
+
+    #[test]
+    fn cookie_value_handles_multiple_cookies() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static("a=1; test=hello; b=2"));
+        assert_eq!(cookie_value(&headers, "test"), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn cookie_value_returns_none_for_empty_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static("test=; other=value"));
+        assert_eq!(cookie_value(&headers, "test"), None);
+    }
+
+    #[test]
+    fn session_id_returns_cookie_when_present() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cookie",
+            HeaderValue::from_static("avatar_session_id=test-session-123"),
+        );
+        assert_eq!(session_id(&headers), "test-session-123");
+    }
+
+    #[test]
+    fn session_id_generates_uuid_when_missing() {
+        let headers = HeaderMap::new();
+        let id = session_id(&headers);
+        assert!(uuid::Uuid::parse_str(&id).is_ok());
+    }
+
+    #[test]
+    fn lang_parses_en() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static("lang=en"));
+        assert_eq!(lang(&headers), Lang::En);
+    }
+
+    #[test]
+    fn lang_parses_en_case_insensitive() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static("lang=EN"));
+        assert_eq!(lang(&headers), Lang::En);
+    }
+
+    #[test]
+    fn lang_defaults_to_pt_br_when_missing() {
+        let headers = HeaderMap::new();
+        assert_eq!(lang(&headers), Lang::PtBr);
+    }
+
+    #[test]
+    fn lang_defaults_to_pt_br_when_invalid() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static("lang=fr"));
+        assert_eq!(lang(&headers), Lang::PtBr);
+    }
+
+    #[test]
+    fn client_key_uses_peer_when_trust_forwarded_false() {
+        let headers = HeaderMap::new();
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 12345);
+        let key = client_key(&headers, peer, false);
+        assert_eq!(key, "1.2.3.4");
+    }
+
+    #[test]
+    fn client_key_uses_x_forwarded_for_when_trust_forwarded_true() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("10.0.0.1, 10.0.0.2"),
+        );
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 12345);
+        let key = client_key(&headers, peer, true);
+        assert_eq!(key, "10.0.0.1");
+    }
+
+    #[test]
+    fn client_key_uses_x_real_ip_when_x_forwarded_for_missing() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", HeaderValue::from_static("192.168.1.1"));
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 12345);
+        let key = client_key(&headers, peer, true);
+        assert_eq!(key, "192.168.1.1");
+    }
+
+    #[test]
+    fn client_key_falls_back_to_peer_when_headers_invalid() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static(""));
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(5, 6, 7, 8)), 12345);
+        let key = client_key(&headers, peer, true);
+        assert_eq!(key, "5.6.7.8");
     }
 }

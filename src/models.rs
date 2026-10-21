@@ -157,7 +157,7 @@ pub fn validate_generate_request(
 }
 
 pub fn random_base_seed() -> String {
-    uuid::Uuid::new_v4().to_string()
+    uuid::Uuid::now_v7().to_string()
 }
 
 pub fn derive_seed(base: &str, index: u32) -> String {

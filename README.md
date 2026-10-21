@@ -1,5 +1,13 @@
 # Avatar Generator
 
+**Objective:** Self-hosted robot avatar generator using RoboHash with session galleries, downloads, and expiry.
+
+**Status:** Active
+
+**Public URL:** https://avatar.unchain0.com
+
+---
+
 A fullstack Rust web app that generates seeded robot avatars from the
 [RoboHash](https://robohash.org/) library and serves them from your own domain.
 
@@ -20,9 +28,18 @@ CDN. The UI ships in Portuguese (pt-BR, default) and English (en).
   expired files every 10 minutes.
 - `GET /healthz` returns `200 ok` for probes.
 
+## Standards
+
+- CI runs `cargo fmt`, `clippy -D warnings`, the full test suite, `cargo audit`,
+  and coverage with gates of at least 90% line coverage and 90% region coverage
+  (LLVM region coverage is the stable stand-in for branch coverage).
+- HTTP responses include CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`,
+  and `frame-ancestors 'none'` (plus `X-Frame-Options: DENY`). Covered by unit
+  and integration tests under `src/security.rs` and `tests/integration.rs`.
+
 ## Requirements
 
-- Rust stable (1.80+).
+- Rust stable (1.88+).
 - Network access to `https://robohash.org` at runtime (or point `ROBOHASH_BASE_URL`
   at a compatible server).
 
@@ -100,7 +117,9 @@ curl -X POST http://localhost:8080/generate \
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
-cargo test
+cargo test --all-targets
+cargo audit
+cargo llvm-cov --all-targets --fail-under-lines 90 --fail-under-regions 90
 ```
 
 Unit tests cover seed hashing, request validation, and expiry cleanup with a

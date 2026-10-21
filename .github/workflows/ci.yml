@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: read
+  security-events: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -38,6 +39,56 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test --all-targets
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Coverage
+        run: |
+          set -euo pipefail
+          cargo llvm-cov --all-targets --lcov --output-path lcov.info
+          cargo llvm-cov report --summary-only
+          cargo llvm-cov report --json --summary-only > coverage-summary.json
+          python3 - <<'PY'
+          import json
+          import sys
+
+          with open("coverage-summary.json", encoding="utf-8") as fh:
+              data = json.load(fh)
+          totals = data["data"][0]["totals"]
+          lines = float(totals["lines"]["percent"])
+          regions = float(totals["regions"]["percent"])
+          print(f"Coverage gate: lines={lines:.2f}% regions={regions:.2f}% (min 90 each)")
+          # Region coverage is LLVM's stable branch-coverage metric on stable toolchains.
+          failed = False
+          if lines < 90.0:
+              print(f"line coverage below 90%: {lines:.2f}", file=sys.stderr)
+              failed = True
+          if regions < 90.0:
+              print(f"region (branch) coverage below 90%: {regions:.2f}", file=sys.stderr)
+              failed = True
+          sys.exit(1 if failed else 0)
+          PY
+
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+      - name: Audit dependencies
+        run: cargo audit
 
   changes:
     runs-on: ubuntu-latest

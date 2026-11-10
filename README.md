@@ -40,8 +40,10 @@ CDN. The UI ships in Portuguese (pt-BR, default) and English (en).
 ## Requirements
 
 - Rust stable (1.88+).
-- Network access to `https://robohash.org` at runtime (or point `ROBOHASH_BASE_URL`
-  at a compatible server).
+- Network access to a RoboHash-compatible server at runtime. Point
+  `ROBOHASH_BASE_URL` at a local renderer rather than the public service: the
+  official image `ghcr.io/e1ven/robohash` serves the same artwork on the private
+  network, so generation keeps working when `robohash.org` is down.
 
 ## Run locally
 
@@ -97,6 +99,7 @@ docker run --rm -p 8080:8080 -v avatar-generator-data:/data avatar-generator
 | --- | --- | --- |
 | `GET` | `/healthz` | Liveness probe, returns `ok`. |
 | `GET` | `/` | Rendered gallery for the current session. |
+| `GET` | `/preview` | PNG preview for the UI. Query: `set`, `background`, `size`. |
 | `POST` | `/generate` | Generate a batch. JSON: `count`, `seed`, `set`, `background`, `size`, `ttl_days`. |
 | `GET` | `/avatar/:id` | Cached PNG for an avatar. |
 | `GET` | `/download/:id` | Download a single PNG. |

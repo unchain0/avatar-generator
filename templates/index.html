@@ -7,7 +7,7 @@
     <link rel="icon" href="/static/favicon.ico" sizes="32x32">
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/static/favicon-180.png">
-    <meta name="theme-color" content="#2f6fed">
+    <meta name="theme-color" content="#f3f0e8">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body
@@ -21,141 +21,174 @@
     data-msg-invalid="{{ t.msg_invalid }}"
     data-msg-preview-unavailable="{{ t.preview_unavailable }}"
 >
+    <a class="skip-link" href="#main">{{ t.skip_to_content }}</a>
     <header class="topbar">
-        <span class="brand">{{ t.app_title }}</span>
+        <a class="brand" href="/" aria-label="{{ t.app_title }}">
+            <img src="/static/favicon.svg" alt="" width="36" height="36">
+            <span>{{ t.app_title }}</span>
+        </a>
         <nav class="lang" aria-label="Language">
-            <button type="button" data-lang="pt-br"{% if lang == "pt-br" %} class="active"{% endif %}>PT</button>
-            <button type="button" data-lang="en"{% if lang == "en" %} class="active"{% endif %}>EN</button>
+            <button type="button" data-lang="pt-br" aria-label="Português"{% if lang == "pt-br" %} class="active" aria-pressed="true"{% else %} aria-pressed="false"{% endif %}>PT</button>
+            <button type="button" data-lang="en" aria-label="English"{% if lang == "en" %} class="active" aria-pressed="true"{% else %} aria-pressed="false"{% endif %}>EN</button>
         </nav>
     </header>
 
-    <main class="container">
-        <p class="subtitle">{{ t.subtitle }}</p>
-
-        <form id="generateForm" class="controls">
-            <div class="control-group">
-                <label for="count">{{ t.count_label }}</label>
-                <input type="number" id="count" name="count" min="1" max="50" value="1" required>
-            </div>
-            <div class="control-group">
-                <label for="seed">{{ t.seed_label }}</label>
-                <input type="text" id="seed" name="seed" maxlength="128" placeholder="{{ t.seed_placeholder }}">
-            </div>
-            <div class="control-group">
-                <label for="set">{{ t.set_label }}</label>
-                <select id="set" name="set">
-                    <option value="set1">Set 1</option>
-                    <option value="set2">Set 2</option>
-                    <option value="set3">Set 3</option>
-                    <option value="set4">Set 4</option>
-                    <option value="set5">Set 5</option>
-                </select>
-            </div>
-            <div class="control-group">
-                <label for="background">{{ t.background_label }}</label>
-                <select id="background" name="background">
-                    <option value="bg1">BG 1</option>
-                    <option value="bg2">BG 2</option>
-                    <option value="none">{{ t.bg_none }}</option>
-                </select>
-            </div>
-            <div class="control-group">
-                <label for="size">{{ t.size_label }}</label>
-                <select id="size" name="size">
-                    <option value="50">50 x 50</option>
-                    <option value="100">100 x 100</option>
-                    <option value="200">200 x 200</option>
-                    <option value="300">300 x 300</option>
-                    <option value="400">400 x 400</option>
-                    <option value="500">500 x 500</option>
-                    <option value="640">640 x 640</option>
-                    <option value="800">800 x 800</option>
-                    <option value="1024">1024 x 1024</option>
-                </select>
-            </div>
-            <div class="control-group">
-                <label for="ttl_days">{{ t.ttl_label }}</label>
-                <input type="number" id="ttl_days" name="ttl_days" min="1" max="30" value="{{ default_ttl }}">
-            </div>
-        </form>
-
-        <section class="previews" aria-label="{{ t.preview_label }}">
-            <div class="preview-block">
-                <span class="preview-heading">{{ t.set_label }}</span>
-                <div class="preview-row" id="setPreview">
-                    <button type="button" class="preview-tile" data-set="set1" aria-pressed="true">
-                        <img src="https://robohash.org/avatar-preview?set=set1&amp;size=120x120&amp;bgset=bg1" alt="Set 1, BG 1" width="64" height="64" loading="lazy">
-                        <span>Set 1</span>
-                    </button>
-                    <button type="button" class="preview-tile" data-set="set2" aria-pressed="false">
-                        <img src="https://robohash.org/avatar-preview?set=set2&amp;size=120x120&amp;bgset=bg1" alt="Set 2, BG 1" width="64" height="64" loading="lazy">
-                        <span>Set 2</span>
-                    </button>
-                    <button type="button" class="preview-tile" data-set="set3" aria-pressed="false">
-                        <img src="https://robohash.org/avatar-preview?set=set3&amp;size=120x120&amp;bgset=bg1" alt="Set 3, BG 1" width="64" height="64" loading="lazy">
-                        <span>Set 3</span>
-                    </button>
-                    <button type="button" class="preview-tile" data-set="set4" aria-pressed="false">
-                        <img src="https://robohash.org/avatar-preview?set=set4&amp;size=120x120&amp;bgset=bg1" alt="Set 4, BG 1" width="64" height="64" loading="lazy">
-                        <span>Set 4</span>
-                    </button>
-                    <button type="button" class="preview-tile" data-set="set5" aria-pressed="false">
-                        <img src="https://robohash.org/avatar-preview?set=set5&amp;size=120x120&amp;bgset=bg1" alt="Set 5, BG 1" width="64" height="64" loading="lazy">
-                        <span>Set 5</span>
-                    </button>
-                </div>
-            </div>
-            <div class="preview-block">
-                <span class="preview-heading">{{ t.background_label }}</span>
-                <div class="preview-row" id="bgPreview">
-                    <button type="button" class="preview-tile" data-background="bg1" aria-pressed="true">
-                        <img src="https://robohash.org/avatar-preview?set=set1&amp;size=120x120&amp;bgset=bg1" alt="BG 1" width="64" height="64" loading="lazy">
-                        <span>BG 1</span>
-                    </button>
-                    <button type="button" class="preview-tile" data-background="bg2" aria-pressed="false">
-                        <img src="https://robohash.org/avatar-preview?set=set1&amp;size=120x120&amp;bgset=bg2" alt="BG 2" width="64" height="64" loading="lazy">
-                        <span>BG 2</span>
-                    </button>
-                    <button type="button" class="preview-tile" data-background="none" aria-pressed="false">
-                        <img src="https://robohash.org/avatar-preview?set=set1&amp;size=120x120" alt="{{ t.bg_none }}" width="64" height="64" loading="lazy">
-                        <span>{{ t.bg_none }}</span>
-                    </button>
-                </div>
-            </div>
+    <main id="main" class="container">
+        <section class="intro" aria-labelledby="page-title">
+            <p class="intro-mark">RoboHash <span>·</span> {{ t.studio_label }}</p>
+            <h1 id="page-title">{{ t.page_heading }}</h1>
+            <p class="subtitle">{{ t.subtitle }}</p>
         </section>
 
-        <div class="actions">
-            <button type="submit" id="generateBtn" form="generateForm">{{ t.generate_btn }}</button>
-            <button type="button" id="downloadAllBtn"{% if avatars.len() == 0 %} disabled{% endif %}>{{ t.download_all_btn }}</button>
-            <button type="button" id="clearAllBtn"{% if avatars.len() == 0 %} disabled{% endif %}>{{ t.clear_all_btn }}</button>
-        </div>
+        <section class="studio" aria-label="{{ t.preview_label }}">
+            <form id="generateForm" class="settings">
+                <div class="settings-heading">
+                    <h2>{{ t.customize_title }}</h2>
+                    <p>{{ t.customize_hint }}</p>
+                </div>
+
+                <div class="option-group">
+                    <span class="option-label">{{ t.set_label }}</span>
+                    <div class="preview-row set-options" id="setPreview">
+                        <button type="button" class="preview-tile" data-set="set1" aria-pressed="true" aria-label="Set 1">
+                            <img src="/preview?set=set1&amp;background=bg1&amp;size=120" alt="" width="76" height="76" loading="lazy">
+                            <span>Set 1</span>
+                        </button>
+                        <button type="button" class="preview-tile" data-set="set2" aria-pressed="false" aria-label="Set 2">
+                            <img src="/preview?set=set2&amp;background=bg1&amp;size=120" alt="" width="76" height="76" loading="lazy">
+                            <span>Set 2</span>
+                        </button>
+                        <button type="button" class="preview-tile" data-set="set3" aria-pressed="false" aria-label="Set 3">
+                            <img src="/preview?set=set3&amp;background=bg1&amp;size=120" alt="" width="76" height="76" loading="lazy">
+                            <span>Set 3</span>
+                        </button>
+                        <button type="button" class="preview-tile" data-set="set4" aria-pressed="false" aria-label="Set 4">
+                            <img src="/preview?set=set4&amp;background=bg1&amp;size=120" alt="" width="76" height="76" loading="lazy">
+                            <span>Set 4</span>
+                        </button>
+                        <button type="button" class="preview-tile" data-set="set5" aria-pressed="false" aria-label="Set 5">
+                            <img src="/preview?set=set5&amp;background=bg1&amp;size=120" alt="" width="76" height="76" loading="lazy">
+                            <span>Set 5</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="option-group">
+                    <span class="option-label">{{ t.background_label }}</span>
+                    <div class="preview-row background-options" id="bgPreview">
+                        <button type="button" class="preview-tile" data-background="bg1" aria-pressed="true" aria-label="BG 1">
+                            <img src="/preview?set=set1&amp;background=bg1&amp;size=120" alt="" width="76" height="76" loading="lazy">
+                            <span>BG 1</span>
+                        </button>
+                        <button type="button" class="preview-tile" data-background="bg2" aria-pressed="false" aria-label="BG 2">
+                            <img src="/preview?set=set1&amp;background=bg2&amp;size=120" alt="" width="76" height="76" loading="lazy">
+                            <span>BG 2</span>
+                        </button>
+                        <button type="button" class="preview-tile" data-background="none" aria-pressed="false" aria-label="{{ t.bg_none }}">
+                            <img src="/preview?set=set1&amp;background=none&amp;size=120" alt="" width="76" height="76" loading="lazy">
+                            <span>{{ t.bg_none }}</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="field-grid">
+                    <div class="control-group">
+                        <label for="seed">{{ t.seed_label }}</label>
+                        <input type="text" id="seed" name="seed" maxlength="128" placeholder="{{ t.seed_placeholder }}" autocomplete="off">
+                    </div>
+                    <div class="control-group">
+                        <label for="count">{{ t.count_label }}</label>
+                        <input type="number" id="count" name="count" min="1" max="50" value="1" required>
+                    </div>
+                    <div class="control-group">
+                        <label for="size">{{ t.size_label }}</label>
+                        <select id="size" name="size">
+                            <option value="50">50 × 50</option>
+                            <option value="100">100 × 100</option>
+                            <option value="200">200 × 200</option>
+                            <option value="300">300 × 300</option>
+                            <option value="400">400 × 400</option>
+                            <option value="500">500 × 500</option>
+                            <option value="640">640 × 640</option>
+                            <option value="800">800 × 800</option>
+                            <option value="1024">1024 × 1024</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="ttl_days">{{ t.ttl_label }}</label>
+                        <input type="number" id="ttl_days" name="ttl_days" min="1" max="30" value="{{ default_ttl }}">
+                    </div>
+                </div>
+
+                <input type="hidden" id="set" name="set" value="set1">
+                <input type="hidden" id="background" name="background" value="bg1">
+                <div class="generate-row">
+                    <button type="submit" id="generateBtn" class="generate-button">{{ t.generate_btn }}</button>
+                    <span class="generate-note">{{ t.seed_note }}</span>
+                </div>
+            </form>
+
+            <aside class="preview-stage" aria-label="{{ t.selected_preview }}">
+                <div class="stage-topline"><span>{{ t.selected_preview }}</span><span class="stage-size" id="previewSize">50 × 50</span></div>
+                <div class="stage-art" id="stageArt" aria-busy="true">
+                    <img id="currentPreview" src="/preview?set=set1&amp;background=bg1&amp;size=300" alt="{{ t.avatar_alt }}" width="300" height="300" fetchpriority="high">
+                    <div class="stage-placeholder">
+                        <img src="/static/favicon.svg" alt="" width="56" height="56">
+                        <span>{{ t.preview_unavailable }}</span>
+                    </div>
+                </div>
+                <p class="stage-caption">{{ t.preview_caption }}</p>
+            </aside>
+        </section>
 
         <p id="status" class="status" role="status" aria-live="polite"></p>
 
-        <section id="gallery" class="gallery">
-            {% for avatar in avatars %}
-            <article class="avatar-card" data-id="{{ avatar.id }}">
-                <img src="/avatar/{{ avatar.id }}" alt="{{ t.avatar_alt }} {{ avatar.seed }}" loading="lazy" width="{{ avatar.size }}" height="{{ avatar.size }}">
-                <dl class="meta">
-                    <dt>{{ t.seed_label_short }}</dt>
-                    <dd title="{{ avatar.seed }}">{{ avatar.seed_short }}</dd>
-                    <dt>{{ t.set_label_short }}</dt>
-                    <dd>{{ avatar.set }}</dd>
-                    <dt>{{ t.bg_label_short }}</dt>
-                    <dd>{{ avatar.background }}</dd>
-                    <dt>{{ t.expires_label }}</dt>
-                    <dd>{{ avatar.expires_at }}</dd>
-                </dl>
-                <div class="card-actions">
-                    <a class="btn" href="/download/{{ avatar.id }}" download>{{ t.download }}</a>
-                    <button type="button" class="btn danger" data-delete="{{ avatar.id }}">{{ t.delete }}</button>
+        <section id="gallerySection" class="gallery-section" aria-labelledby="galleryTitle">
+            <div class="gallery-heading">
+                <div>
+                    <p class="section-mark">{{ t.collection_label }}</p>
+                    <h2 id="galleryTitle">{{ t.gallery_title }}</h2>
                 </div>
-            </article>
-            {% else %}
-            <p class="empty">{{ t.no_avatars }}</p>
-            {% endfor %}
+                <div class="actions">
+                    <button type="button" id="downloadAllBtn" class="secondary-button"{% if avatars.len() == 0 %} disabled{% endif %}>{{ t.download_all_btn }}</button>
+                    <button type="button" id="clearAllBtn" class="text-button"{% if avatars.len() == 0 %} disabled{% endif %}>{{ t.clear_all_btn }}</button>
+                </div>
+            </div>
+
+            <div id="gallery" class="gallery" aria-live="polite">
+                {% for avatar in avatars %}
+                <article class="avatar-card" data-id="{{ avatar.id }}">
+                    <div class="avatar-image"><img src="/avatar/{{ avatar.id }}" alt="{{ t.avatar_alt }} {{ avatar.seed }}" loading="lazy" width="{{ avatar.size }}" height="{{ avatar.size }}"></div>
+                    <dl class="meta">
+                        <dt>{{ t.seed_label_short }}</dt>
+                        <dd title="{{ avatar.seed }}">{{ avatar.seed_short }}</dd>
+                        <dt>{{ t.set_label_short }}</dt>
+                        <dd>{{ avatar.set }}</dd>
+                        <dt>{{ t.bg_label_short }}</dt>
+                        <dd>{{ avatar.background }}</dd>
+                        <dt>{{ t.expires_label }}</dt>
+                        <dd>{{ avatar.expires_at }}</dd>
+                    </dl>
+                    <div class="card-actions">
+                        <a class="btn" href="/download/{{ avatar.id }}" download>{{ t.download }}</a>
+                        <button type="button" class="btn delete-button" data-delete="{{ avatar.id }}">{{ t.delete }}</button>
+                    </div>
+                </article>
+                {% else %}
+                <div class="empty">
+                    <div class="empty-mark" aria-hidden="true">＋</div>
+                    <h3>{{ t.empty_title }}</h3>
+                    <p>{{ t.no_avatars }}</p>
+                </div>
+                {% endfor %}
+            </div>
         </section>
     </main>
+
+    <footer class="site-footer">
+        <span>{{ t.footer_note }}</span>
+        <a href="https://robohash.org/" target="_blank" rel="noreferrer">RoboHash</a>
+    </footer>
 
     <script src="/static/app.js" defer></script>
 </body>

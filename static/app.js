@@ -6,6 +6,9 @@
     const downloadAllBtn = document.getElementById("downloadAllBtn");
     const clearAllBtn = document.getElementById("clearAllBtn");
     const gallery = document.getElementById("gallery");
+    const currentPreview = document.getElementById("currentPreview");
+    const stageArt = document.getElementById("stageArt");
+    const previewSize = document.getElementById("previewSize");
 
     function setStatus(text, isError) {
         status.textContent = text;
@@ -16,10 +19,9 @@
         return document.getElementById(id).value;
     }
 
-    function previewPath(set, background) {
-        const params = new URLSearchParams({ set: set, size: "120x120" });
-        if (background !== "none") params.set("bgset", background);
-        return "https://robohash.org/avatar-preview?" + params.toString();
+    function previewPath(set, background, size) {
+        const params = new URLSearchParams({ set: set, background: background, size: String(size) });
+        return "/preview?" + params.toString();
     }
 
     function trackPreviewErrors() {
@@ -46,15 +48,20 @@
 
         document.querySelectorAll("#setPreview [data-set]").forEach(function (tile) {
             const set = tile.dataset.set;
-            tile.querySelector("img").src = previewPath(set, selectedBackground);
+            tile.querySelector("img").src = previewPath(set, selectedBackground, 120);
             tile.setAttribute("aria-pressed", String(set === selectedSet));
         });
 
         document.querySelectorAll("#bgPreview [data-background]").forEach(function (tile) {
             const background = tile.dataset.background;
-            tile.querySelector("img").src = previewPath(selectedSet, background);
+            tile.querySelector("img").src = previewPath(selectedSet, background, 120);
             tile.setAttribute("aria-pressed", String(background === selectedBackground));
         });
+
+        currentPreview.src = previewPath(selectedSet, selectedBackground, 300);
+        previewSize.textContent = valueOf("size") + " × " + valueOf("size");
+        stageArt.setAttribute("aria-busy", "true");
+        stageArt.classList.remove("is-unavailable");
     }
 
     async function generate(event) {
@@ -75,6 +82,7 @@
         };
 
         generateBtn.disabled = true;
+        generateBtn.setAttribute("aria-busy", "true");
         setStatus(body.dataset.msgGenerating, false);
         try {
             const response = await fetch("/generate", {
@@ -95,6 +103,7 @@
         } catch (error) {
             setStatus(error.message || body.dataset.msgError, true);
             generateBtn.disabled = false;
+            generateBtn.removeAttribute("aria-busy");
         }
     }
 
@@ -106,10 +115,7 @@
             const card = gallery.querySelector('.avatar-card[data-id="' + CSS.escape(id) + '"]');
             if (card) card.remove();
             setStatus(body.dataset.msgDeleted, false);
-            if (!gallery.querySelector(".avatar-card")) {
-                downloadAllBtn.disabled = true;
-                clearAllBtn.disabled = true;
-            }
+            if (!gallery.querySelector(".avatar-card")) window.location.reload();
         } catch (error) {
             setStatus(error.message, true);
         }
@@ -127,8 +133,16 @@
         }
     }
 
-    document.getElementById("set").addEventListener("change", updatePreviews);
-    document.getElementById("background").addEventListener("change", updatePreviews);
+    currentPreview.addEventListener("load", function () {
+        stageArt.setAttribute("aria-busy", "false");
+        stageArt.classList.remove("is-unavailable");
+    });
+    currentPreview.addEventListener("error", function () {
+        stageArt.setAttribute("aria-busy", "false");
+        stageArt.classList.add("is-unavailable");
+    });
+
+    document.getElementById("size").addEventListener("change", updatePreviews);
     document.getElementById("setPreview").addEventListener("click", function (event) {
         const tile = event.target.closest("[data-set]");
         if (tile) {

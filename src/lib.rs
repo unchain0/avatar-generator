@@ -55,6 +55,7 @@ pub fn app(state: AppState) -> Router {
         .route("/healthz", get(handlers::healthz))
         .route("/", get(handlers::index))
         .route("/generate", post(handlers::generate))
+        .route("/preview", get(handlers::preview))
         .route(
             "/avatar/:id",
             get(handlers::get_avatar).delete(handlers::delete_avatar),

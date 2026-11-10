@@ -249,6 +249,11 @@ async fn index_renders_gallery_markup() {
     assert!(html.contains("app.js"));
     assert!(html.contains("<title>Avatares RoboHash</title>"));
     assert!(html.contains(r#"rel="icon" href="/static/favicon.svg""#));
+    assert!(html.contains(r#"id="stageArt""#));
+    assert!(html.contains(r#"id="galleryTitle""#));
+    assert!(html.contains("Sua galeria começa aqui"));
+    assert!(html.contains("Crie um avatar RoboHash"));
+    assert!(html.contains("site-footer"));
 }
 
 #[tokio::test]
@@ -556,6 +561,74 @@ async fn generate_respects_trust_forwarded_header() {
 
     let (status, _, _) = send(&router, req).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn preview_proxies_a_png_without_a_session() {
+    let server = MockServer::start().await;
+    let (router, _dir) = harness(&server, 100).await;
+
+    let (status, headers, body) = send(
+        &router,
+        get("/preview?set=set2&background=bg1&size=200", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers.get(header::CONTENT_TYPE).unwrap(), "image/png");
+    assert_eq!(body, PNG);
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let url = requests[0].url.to_string();
+    assert!(url.contains("set=set2"), "upstream url: {url}");
+    assert!(url.contains("size=200x200"), "upstream url: {url}");
+    assert!(url.contains("bgset=bg1"), "upstream url: {url}");
+}
+
+#[tokio::test]
+async fn preview_accepts_thumbnail_sizes_outside_the_avatar_list() {
+    let server = MockServer::start().await;
+    let (router, _dir) = harness(&server, 100).await;
+
+    let (status, _, _) = send(
+        &router,
+        get("/preview?set=set1&background=none&size=120", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn preview_rejects_unknown_options() {
+    let server = MockServer::start().await;
+    let (router, _dir) = harness(&server, 100).await;
+
+    for uri in [
+        "/preview?set=set9&size=200",
+        "/preview?set=set1&background=rainbow&size=200",
+        "/preview?set=set1&size=8",
+        "/preview?set=set1&size=2048",
+    ] {
+        let (status, _, _) = send(&router, get(uri, None)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn preview_returns_bad_gateway_when_upstream_fails() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(525))
+        .mount(&server)
+        .await;
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let state = build_state(config(server.uri(), dir.path().to_path_buf(), 100), store);
+    let router = app(state);
+
+    let (status, _, _) = send(&router, get("/preview?set=set1&size=200", None)).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
 
 fn parse_id(body: &[u8]) -> String {

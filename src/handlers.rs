@@ -360,7 +360,17 @@ pub async fn generate(
     let mut tasks = JoinSet::new();
     for index in 0..validated.count {
         let seed = derive_seed(&base_seed, index);
-        let url = avatar_url(&state.config.robohash_base, &seed, &options);
+        let url = match avatar_url(&state.config.robohash_base, &seed, &options) {
+            Ok(url) => url,
+            Err(e) => {
+                error!("invalid ROBOHASH_BASE_URL: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "avatar renderer misconfigured" })),
+                )
+                    .into_response();
+            }
+        };
         let client = state.client.clone();
         let semaphore = state.semaphore.clone();
         tasks.spawn(async move {
@@ -455,7 +465,7 @@ pub async fn preview(State(state): State<AppState>, Query(query): Query<PreviewQ
             .into_response();
     }
 
-    let url = avatar_url(
+    let url = match avatar_url(
         &state.config.robohash_base,
         PREVIEW_SEED,
         &AvatarOptions {
@@ -463,7 +473,17 @@ pub async fn preview(State(state): State<AppState>, Query(query): Query<PreviewQ
             background,
             size,
         },
-    );
+    ) {
+        Ok(url) => url,
+        Err(e) => {
+            error!("invalid ROBOHASH_BASE_URL: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "avatar renderer misconfigured",
+            )
+                .into_response();
+        }
+    };
     let _permit = match state.semaphore.acquire().await {
         Ok(permit) => permit,
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "shutting down").into_response(),

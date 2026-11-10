@@ -13,6 +13,7 @@ pub enum UpstreamError {
     Empty,
     TooLarge,
     NotAnImage,
+    InvalidBase(String),
 }
 
 impl std::fmt::Display for UpstreamError {
@@ -25,25 +26,34 @@ impl std::fmt::Display for UpstreamError {
                 write!(f, "upstream response exceeded {MAX_AVATAR_BYTES} bytes")
             }
             UpstreamError::NotAnImage => write!(f, "upstream body was not a PNG image"),
+            UpstreamError::InvalidBase(msg) => write!(f, "invalid upstream base url: {msg}"),
         }
     }
 }
 
 impl std::error::Error for UpstreamError {}
 
-pub fn avatar_url(base: &str, seed: &str, options: &AvatarOptions) -> String {
-    let base = base.trim_end_matches('/');
-    let mut url = format!(
-        "{base}/{seed}?set={}&size={}x{}",
-        options.set.as_str(),
-        options.size,
-        options.size
-    );
+/// Builds the renderer URL from parsed parts. The seed is pushed as a path
+/// segment, so it is percent-encoded instead of being concatenated raw.
+pub fn avatar_url(
+    base: &str,
+    seed: &str,
+    options: &AvatarOptions,
+) -> Result<String, UpstreamError> {
+    let mut url =
+        reqwest::Url::parse(base).map_err(|e| UpstreamError::InvalidBase(e.to_string()))?;
+    url.path_segments_mut()
+        .map_err(|_| UpstreamError::InvalidBase(format!("{base} cannot have a path")))?
+        .pop_if_empty()
+        .push(seed);
+    let size = format!("{}x{}", options.size, options.size);
+    url.query_pairs_mut()
+        .append_pair("set", options.set.as_str())
+        .append_pair("size", &size);
     if let Some(bg) = options.background.upstream_param() {
-        url.push_str("&bgset=");
-        url.push_str(bg);
+        url.query_pairs_mut().append_pair("bgset", bg);
     }
-    url
+    Ok(url.to_string())
 }
 
 fn validate_image(bytes: &[u8]) -> Result<(), UpstreamError> {
@@ -114,11 +124,35 @@ mod tests {
             background: Background::Bg1,
             size: 300,
         };
-        let url = avatar_url("https://robohash.org/", "abcdef", &options);
+        let url = avatar_url("https://robohash.org/", "abcdef", &options).unwrap();
         assert_eq!(
             url,
             "https://robohash.org/abcdef?set=set3&size=300x300&bgset=bg1"
         );
+    }
+
+    #[test]
+    fn url_encodes_seed_as_a_path_segment() {
+        let options = AvatarOptions {
+            set: RoboSet::Set1,
+            background: Background::None,
+            size: 50,
+        };
+        let url = avatar_url("https://robohash.org", "a/../b?c d", &options).unwrap();
+        assert_eq!(
+            url,
+            "https://robohash.org/a%2F..%2Fb%3Fc%20d?set=set1&size=50x50"
+        );
+    }
+
+    #[test]
+    fn url_rejects_a_base_that_is_not_a_url() {
+        let options = AvatarOptions {
+            set: RoboSet::Set1,
+            background: Background::None,
+            size: 50,
+        };
+        assert!(avatar_url("not a url", "abc", &options).is_err());
     }
 
     #[test]
@@ -128,7 +162,7 @@ mod tests {
             background: Background::None,
             size: 50,
         };
-        let url = avatar_url("https://robohash.org", "abcdef", &options);
+        let url = avatar_url("https://robohash.org", "abcdef", &options).unwrap();
         assert_eq!(url, "https://robohash.org/abcdef?set=set1&size=50x50");
     }
 

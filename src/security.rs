@@ -52,13 +52,12 @@ where
 /// Add security headers to the response
 fn add_security_headers(headers: &mut HeaderMap) {
     // Content Security Policy
-    // Restrict sources to self for scripts, styles, images, fonts, and connect
-    // Allow inline styles for askama-rendered HTML (style attributes)
-    // Allow data: for images (avatar PNGs served from our domain)
+    // Restrict scripts, styles, fonts, and connections to this origin.
+    // Allow inline template styles, RoboHash previews, and locally served avatar data.
     let csp = "default-src 'self'; \
                script-src 'self'; \
                style-src 'self' 'unsafe-inline'; \
-               img-src 'self' data:; \
+               img-src 'self' https://robohash.org data:; \
                font-src 'self'; \
                connect-src 'self'; \
                frame-ancestors 'none'; \

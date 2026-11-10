@@ -247,6 +247,8 @@ async fn index_renders_gallery_markup() {
     let html = String::from_utf8(body).unwrap();
     assert!(html.contains("generateForm"));
     assert!(html.contains("app.js"));
+    assert!(html.contains("<title>Avatares RoboHash</title>"));
+    assert!(html.contains(r#"rel="icon" href="/static/favicon.svg""#));
 }
 
 #[tokio::test]
@@ -351,6 +353,21 @@ async fn static_file_serves_js_and_css() {
     let (status, headers, body) = send(&router, get("/static/style.css", None)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers.get(header::CONTENT_TYPE).unwrap(), "text/css");
+    assert!(!body.is_empty());
+}
+
+#[tokio::test]
+async fn static_file_serves_favicon_assets() {
+    let server = MockServer::start().await;
+    let (router, _dir) = harness(&server, 100).await;
+
+    let (status, headers, body) = send(&router, get("/static/favicon.svg", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers.get(header::CONTENT_TYPE).unwrap(), "image/svg+xml");
+    assert!(!body.is_empty());
+
+    let (status, _, body) = send(&router, get("/static/favicon.ico", None)).await;
+    assert_eq!(status, StatusCode::OK);
     assert!(!body.is_empty());
 }
 

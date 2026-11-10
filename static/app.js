@@ -16,6 +16,47 @@
         return document.getElementById(id).value;
     }
 
+    function previewPath(set, background) {
+        const params = new URLSearchParams({ set: set, size: "120x120" });
+        if (background !== "none") params.set("bgset", background);
+        return "https://robohash.org/avatar-preview?" + params.toString();
+    }
+
+    function trackPreviewErrors() {
+        document.querySelectorAll(".preview-tile img").forEach(function (image) {
+            image.dataset.defaultAlt = image.alt;
+            image.addEventListener("error", function () {
+                const tile = image.closest(".preview-tile");
+                image.classList.add("unavailable");
+                tile.classList.add("preview-unavailable");
+                tile.dataset.previewError = body.dataset.msgPreviewUnavailable;
+            });
+            image.addEventListener("load", function () {
+                const tile = image.closest(".preview-tile");
+                image.classList.remove("unavailable");
+                tile.classList.remove("preview-unavailable");
+                delete tile.dataset.previewError;
+            });
+        });
+    }
+
+    function updatePreviews() {
+        const selectedSet = valueOf("set");
+        const selectedBackground = valueOf("background");
+
+        document.querySelectorAll("#setPreview [data-set]").forEach(function (tile) {
+            const set = tile.dataset.set;
+            tile.querySelector("img").src = previewPath(set, selectedBackground);
+            tile.setAttribute("aria-pressed", String(set === selectedSet));
+        });
+
+        document.querySelectorAll("#bgPreview [data-background]").forEach(function (tile) {
+            const background = tile.dataset.background;
+            tile.querySelector("img").src = previewPath(selectedSet, background);
+            tile.setAttribute("aria-pressed", String(background === selectedBackground));
+        });
+    }
+
     async function generate(event) {
         event.preventDefault();
         const count = parseInt(valueOf("count"), 10);
@@ -85,6 +126,25 @@
             setStatus(error.message, true);
         }
     }
+
+    document.getElementById("set").addEventListener("change", updatePreviews);
+    document.getElementById("background").addEventListener("change", updatePreviews);
+    document.getElementById("setPreview").addEventListener("click", function (event) {
+        const tile = event.target.closest("[data-set]");
+        if (tile) {
+            document.getElementById("set").value = tile.dataset.set;
+            updatePreviews();
+        }
+    });
+    document.getElementById("bgPreview").addEventListener("click", function (event) {
+        const tile = event.target.closest("[data-background]");
+        if (tile) {
+            document.getElementById("background").value = tile.dataset.background;
+            updatePreviews();
+        }
+    });
+    trackPreviewErrors();
+    updatePreviews();
 
     form.addEventListener("submit", generate);
     downloadAllBtn.addEventListener("click", function () {

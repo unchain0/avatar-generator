@@ -616,6 +616,19 @@ async fn preview_rejects_unknown_options() {
 }
 
 #[tokio::test]
+async fn preview_is_rate_limited_like_generation() {
+    let server = MockServer::start().await;
+    let (router, _dir) = harness(&server, 1).await;
+
+    let (status, _, _) = send(&router, get("/preview?set=set1&size=200", None)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, _) = send(&router, get("/preview?set=set1&size=200", None)).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn preview_returns_bad_gateway_when_upstream_fails() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

@@ -445,7 +445,21 @@ pub struct PreviewQuery {
 
 /// Renders the UI previews through the same upstream as generation, so the
 /// browser never depends on a third party and CSP can stay `self`.
-pub async fn preview(State(state): State<AppState>, Query(query): Query<PreviewQuery>) -> Response {
+pub async fn preview(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(query): Query<PreviewQuery>,
+) -> Response {
+    // The same per-IP budget as generation: a preview costs an upstream permit.
+    if !state.rate.check(&client_key(
+        &headers,
+        peer,
+        state.config.trust_forwarded_headers,
+    )) {
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded").into_response();
+    }
+
     let set = match RoboSet::parse(&query.set) {
         Ok(set) => set,
         Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),

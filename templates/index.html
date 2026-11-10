@@ -3,7 +3,11 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ t.app_title }}</title>
+    <title>{{ t.page_title }}</title>
+    <link rel="icon" href="/static/favicon.ico" sizes="32x32">
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/static/favicon-180.png">
+    <meta name="theme-color" content="#2f6fed">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body
@@ -15,6 +19,7 @@
     data-msg-cleared="{{ t.msg_cleared }}"
     data-msg-error="{{ t.msg_error }}"
     data-msg-invalid="{{ t.msg_invalid }}"
+    data-msg-preview-unavailable="{{ t.preview_unavailable }}"
 >
     <header class="topbar">
         <span class="brand">{{ t.app_title }}</span>
@@ -73,6 +78,51 @@
                 <input type="number" id="ttl_days" name="ttl_days" min="1" max="30" value="{{ default_ttl }}">
             </div>
         </form>
+
+        <section class="previews" aria-label="{{ t.preview_label }}">
+            <div class="preview-block">
+                <span class="preview-heading">{{ t.set_label }}</span>
+                <div class="preview-row" id="setPreview">
+                    <button type="button" class="preview-tile" data-set="set1" aria-pressed="true">
+                        <img src="https://robohash.org/avatar-preview?set=set1&amp;size=120x120&amp;bgset=bg1" alt="Set 1, BG 1" width="64" height="64" loading="lazy">
+                        <span>Set 1</span>
+                    </button>
+                    <button type="button" class="preview-tile" data-set="set2" aria-pressed="false">
+                        <img src="https://robohash.org/avatar-preview?set=set2&amp;size=120x120&amp;bgset=bg1" alt="Set 2, BG 1" width="64" height="64" loading="lazy">
+                        <span>Set 2</span>
+                    </button>
+                    <button type="button" class="preview-tile" data-set="set3" aria-pressed="false">
+                        <img src="https://robohash.org/avatar-preview?set=set3&amp;size=120x120&amp;bgset=bg1" alt="Set 3, BG 1" width="64" height="64" loading="lazy">
+                        <span>Set 3</span>
+                    </button>
+                    <button type="button" class="preview-tile" data-set="set4" aria-pressed="false">
+                        <img src="https://robohash.org/avatar-preview?set=set4&amp;size=120x120&amp;bgset=bg1" alt="Set 4, BG 1" width="64" height="64" loading="lazy">
+                        <span>Set 4</span>
+                    </button>
+                    <button type="button" class="preview-tile" data-set="set5" aria-pressed="false">
+                        <img src="https://robohash.org/avatar-preview?set=set5&amp;size=120x120&amp;bgset=bg1" alt="Set 5, BG 1" width="64" height="64" loading="lazy">
+                        <span>Set 5</span>
+                    </button>
+                </div>
+            </div>
+            <div class="preview-block">
+                <span class="preview-heading">{{ t.background_label }}</span>
+                <div class="preview-row" id="bgPreview">
+                    <button type="button" class="preview-tile" data-background="bg1" aria-pressed="true">
+                        <img src="https://robohash.org/avatar-preview?set=set1&amp;size=120x120&amp;bgset=bg1" alt="BG 1" width="64" height="64" loading="lazy">
+                        <span>BG 1</span>
+                    </button>
+                    <button type="button" class="preview-tile" data-background="bg2" aria-pressed="false">
+                        <img src="https://robohash.org/avatar-preview?set=set1&amp;size=120x120&amp;bgset=bg2" alt="BG 2" width="64" height="64" loading="lazy">
+                        <span>BG 2</span>
+                    </button>
+                    <button type="button" class="preview-tile" data-background="none" aria-pressed="false">
+                        <img src="https://robohash.org/avatar-preview?set=set1&amp;size=120x120" alt="{{ t.bg_none }}" width="64" height="64" loading="lazy">
+                        <span>{{ t.bg_none }}</span>
+                    </button>
+                </div>
+            </div>
+        </section>
 
         <div class="actions">
             <button type="submit" id="generateBtn" form="generateForm">{{ t.generate_btn }}</button>

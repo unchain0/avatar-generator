@@ -1,14 +1,14 @@
 use crate::models::{
-    derive_seed, random_base_seed, validate_generate_request, AvatarRecord, AvatarView,
-    GenerateRequest, GenerateResponse,
+    derive_seed, random_base_seed, validate_generate_request, AvatarOptions, AvatarRecord,
+    AvatarView, Background, GenerateRequest, GenerateResponse, RoboSet,
 };
 use crate::upstream::{avatar_url, fetch_avatar};
 use crate::AppState;
 use askama::Template;
 use axum::{
-    extract::{ConnectInfo, Path as AxumPath, State},
+    extract::{ConnectInfo, Path as AxumPath, Query, State},
     http::{
-        header::{CONTENT_DISPOSITION, CONTENT_TYPE, SET_COOKIE},
+        header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, SET_COOKIE},
         HeaderMap, HeaderValue, StatusCode,
     },
     response::{Html, IntoResponse, Response},
@@ -48,6 +48,7 @@ impl Lang {
 struct Texts {
     app_title: &'static str,
     page_title: &'static str,
+    page_heading: &'static str,
     subtitle: &'static str,
     count_label: &'static str,
     seed_label: &'static str,
@@ -56,6 +57,17 @@ struct Texts {
     background_label: &'static str,
     preview_label: &'static str,
     preview_unavailable: &'static str,
+    studio_label: &'static str,
+    skip_to_content: &'static str,
+    customize_title: &'static str,
+    customize_hint: &'static str,
+    selected_preview: &'static str,
+    preview_caption: &'static str,
+    seed_note: &'static str,
+    collection_label: &'static str,
+    gallery_title: &'static str,
+    empty_title: &'static str,
+    footer_note: &'static str,
     bg_none: &'static str,
     size_label: &'static str,
     ttl_label: &'static str,
@@ -85,14 +97,26 @@ fn texts(lang: Lang) -> Texts {
         Lang::En => Texts {
             app_title: "RoboHash Avatar Generator",
             page_title: "RoboHash Avatars",
+            page_heading: "Create a RoboHash avatar",
             subtitle: "Generate robot avatars from a seeded RoboHash library.",
             count_label: "Count (1-50)",
             seed_label: "Custom seed (optional)",
             seed_placeholder: "Leave blank for a random seed",
             set_label: "Set",
             background_label: "Background",
-            preview_label: "Previews of sets and backgrounds",
+            preview_label: "Customize your avatar",
             preview_unavailable: "Preview unavailable",
+            studio_label: "Avatar studio",
+            skip_to_content: "Skip to content",
+            customize_title: "Make it yours",
+            customize_hint: "Choose a character style and a scene, then set the details.",
+            selected_preview: "Live preview",
+            preview_caption: "Your selections update this preview.",
+            seed_note: "Leave the seed empty to create a random avatar.",
+            collection_label: "Your session",
+            gallery_title: "Saved avatars",
+            empty_title: "Your gallery starts here",
+            footer_note: "Avatar artwork served by RoboHash.",
             bg_none: "None",
             size_label: "Size",
             ttl_label: "Expires in (days)",
@@ -119,14 +143,26 @@ fn texts(lang: Lang) -> Texts {
         Lang::PtBr => Texts {
             app_title: "Gerador de Avatares RoboHash",
             page_title: "Avatares RoboHash",
+            page_heading: "Crie um avatar RoboHash",
             subtitle: "Gere avatares de rob\u{f4} a partir de uma biblioteca RoboHash com seed.",
             count_label: "Quantidade (1-50)",
             seed_label: "Seed personalizada (opcional)",
             seed_placeholder: "Deixe em branco para uma seed aleat\u{f3}ria",
             set_label: "Conjunto",
             background_label: "Fundo",
-            preview_label: "Prévias de conjuntos e fundos",
+            preview_label: "Personalize seu avatar",
             preview_unavailable: "Prévia indisponível",
+            studio_label: "Estúdio de avatares",
+            skip_to_content: "Pular para o conteúdo",
+            customize_title: "Dê a sua cara",
+            customize_hint: "Escolha o estilo e o cenário, depois ajuste os detalhes.",
+            selected_preview: "Prévia ao vivo",
+            preview_caption: "Suas escolhas atualizam esta prévia.",
+            seed_note: "Deixe a seed vazia para criar um avatar aleatório.",
+            collection_label: "Sua sessão",
+            gallery_title: "Avatares salvos",
+            empty_title: "Sua galeria começa aqui",
+            footer_note: "Ilustrações de avatar fornecidas pelo RoboHash.",
             bg_none: "Nenhum",
             size_label: "Tamanho",
             ttl_label: "Expira em (dias)",
@@ -324,7 +360,17 @@ pub async fn generate(
     let mut tasks = JoinSet::new();
     for index in 0..validated.count {
         let seed = derive_seed(&base_seed, index);
-        let url = avatar_url(&state.config.robohash_base, &seed, &options);
+        let url = match avatar_url(&state.config.robohash_base, &seed, &options) {
+            Ok(url) => url,
+            Err(e) => {
+                error!("invalid ROBOHASH_BASE_URL: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "avatar renderer misconfigured" })),
+                )
+                    .into_response();
+            }
+        };
         let client = state.client.clone();
         let semaphore = state.semaphore.clone();
         tasks.spawn(async move {
@@ -383,6 +429,90 @@ pub async fn generate(
         .headers_mut()
         .insert(SET_COOKIE, session_cookie(&session));
     response
+}
+
+const PREVIEW_SEED: &str = "avatar-preview";
+const PREVIEW_CACHE: &str = "public, max-age=600";
+const PREVIEW_MIN_SIZE: u32 = 16;
+const PREVIEW_MAX_SIZE: u32 = 1024;
+
+#[derive(serde::Deserialize)]
+pub struct PreviewQuery {
+    set: String,
+    background: Option<String>,
+    size: Option<u32>,
+}
+
+/// Renders the UI previews through the same upstream as generation, so the
+/// browser never depends on a third party and CSP can stay `self`.
+pub async fn preview(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(query): Query<PreviewQuery>,
+) -> Response {
+    // The same per-IP budget as generation: a preview costs an upstream permit.
+    if !state.rate.check(&client_key(
+        &headers,
+        peer,
+        state.config.trust_forwarded_headers,
+    )) {
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded").into_response();
+    }
+
+    let set = match RoboSet::parse(&query.set) {
+        Ok(set) => set,
+        Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
+    };
+    let background = match Background::parse(query.background.as_deref().unwrap_or("none")) {
+        Ok(background) => background,
+        Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
+    };
+    // Previews are not stored, so they take any square size the renderer
+    // supports; only the bound matters.
+    let size = query.size.unwrap_or(300);
+    if !(PREVIEW_MIN_SIZE..=PREVIEW_MAX_SIZE).contains(&size) {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("invalid size {size}, allowed: {PREVIEW_MIN_SIZE}..={PREVIEW_MAX_SIZE}"),
+        )
+            .into_response();
+    }
+
+    let url = match avatar_url(
+        &state.config.robohash_base,
+        PREVIEW_SEED,
+        &AvatarOptions {
+            set,
+            background,
+            size,
+        },
+    ) {
+        Ok(url) => url,
+        Err(e) => {
+            error!("invalid ROBOHASH_BASE_URL: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "avatar renderer misconfigured",
+            )
+                .into_response();
+        }
+    };
+    let _permit = match state.semaphore.acquire().await {
+        Ok(permit) => permit,
+        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "shutting down").into_response(),
+    };
+    match fetch_avatar(&state.client, &url).await {
+        Ok(bytes) => (
+            [(CONTENT_TYPE, "image/png"), (CACHE_CONTROL, PREVIEW_CACHE)],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => {
+            warn!("preview {url} failed: {e}");
+            (StatusCode::BAD_GATEWAY, "preview unavailable").into_response()
+        }
+    }
 }
 
 pub async fn get_avatar(State(state): State<AppState>, AxumPath(id): AxumPath<String>) -> Response {

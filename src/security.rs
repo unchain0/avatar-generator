@@ -53,11 +53,11 @@ where
 fn add_security_headers(headers: &mut HeaderMap) {
     // Content Security Policy
     // Restrict scripts, styles, fonts, and connections to this origin.
-    // Allow inline template styles, RoboHash previews, and locally served avatar data.
+    // Previews are proxied through /preview, so images stay same-origin.
     let csp = "default-src 'self'; \
                script-src 'self'; \
                style-src 'self' 'unsafe-inline'; \
-               img-src 'self' https://robohash.org data:; \
+               img-src 'self' data:; \
                font-src 'self'; \
                connect-src 'self'; \
                frame-ancestors 'none'; \

@@ -658,6 +658,54 @@ async fn preview_has_its_own_budget() {
 }
 
 #[tokio::test]
+async fn warm_previews_fills_the_cache_for_the_first_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "image/png")
+                .set_body_bytes(PNG),
+        )
+        .mount(&server)
+        .await;
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let state = build_state(config(server.uri(), dir.path().to_path_buf(), 100), store);
+    let router = app(state.clone());
+
+    avatar_generator::handlers::warm_previews(state).await;
+    let warmed = server.received_requests().await.unwrap().len();
+    assert_eq!(warmed, 8, "five sets, two extra backgrounds and the stage");
+
+    let (status, _, _) = send(
+        &router,
+        get("/preview?set=set3&background=bg1&size=120", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        warmed,
+        "a warmed preview is served from cache"
+    );
+}
+
+#[tokio::test]
+async fn preview_reports_a_misconfigured_renderer() {
+    let server = MockServer::start().await;
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let state = build_state(
+        config("not a url".to_string(), dir.path().to_path_buf(), 100),
+        store,
+    );
+    let router = app(state);
+
+    let (status, _, _) = send(&router, get("/preview?set=set1&size=120", None)).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
 async fn preview_returns_bad_gateway_when_upstream_fails() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

@@ -889,4 +889,32 @@ mod tests {
         let key = client_key(&headers, peer, true);
         assert_eq!(key, "5.6.7.8");
     }
+
+    fn preview_key(size: u32) -> (String, u32) {
+        ("set1-bg1".to_string(), size)
+    }
+
+    #[test]
+    fn preview_cache_returns_what_it_stored() {
+        let cache = PreviewCache::new();
+        assert!(cache.get(&preview_key(120)).is_none());
+        cache.put(preview_key(120), vec![1, 2, 3]);
+        assert_eq!(cache.get(&preview_key(120)), Some(vec![1, 2, 3]));
+        assert!(cache.get(&preview_key(300)).is_none());
+    }
+
+    #[test]
+    fn preview_cache_stays_bounded() {
+        let cache = PreviewCache::new();
+        for size in 16..16 + PREVIEW_CACHE_CAPACITY as u32 + 1 {
+            cache.put(preview_key(size), vec![0; 4]);
+        }
+        let len = cache.entries.lock().unwrap().len();
+        assert!(len <= PREVIEW_CACHE_CAPACITY);
+        assert_eq!(
+            cache.get(&preview_key(16)),
+            None,
+            "oldest entries were evicted"
+        );
+    }
 }

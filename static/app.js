@@ -107,10 +107,10 @@
         try {
             const response = await fetch("/avatar/" + encodeURIComponent(id), { method: "DELETE" });
             if (!response.ok) throw new Error(body.dataset.msgError);
-            const card = gallery.querySelector('.avatar-card[data-id="' + CSS.escape(id) + '"]');
+            const card = gallery.querySelector('.card[data-id="' + CSS.escape(id) + '"]');
             if (card) card.remove();
             setStatus(body.dataset.msgDeleted, false);
-            if (!gallery.querySelector(".avatar-card")) window.location.reload();
+            if (!gallery.querySelector(".card")) window.location.reload();
         } catch (error) {
             setStatus(error.message, true);
         }

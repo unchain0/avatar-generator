@@ -29,7 +29,9 @@ pub struct AppState {
     pub client: reqwest::Client,
     pub config: Arc<Config>,
     pub rate: Arc<RateLimiter>,
+    pub preview_rate: Arc<RateLimiter>,
     pub semaphore: Arc<Semaphore>,
+    pub preview_cache: Arc<handlers::PreviewCache>,
 }
 
 pub fn build_state(config: Config, store: Arc<Store>) -> AppState {
@@ -38,6 +40,8 @@ pub fn build_state(config: Config, store: Arc<Store>) -> AppState {
         client: build_client(),
         semaphore: Arc::new(Semaphore::new(config.max_upstream_concurrency)),
         rate: Arc::new(RateLimiter::per_minute(config.rate_limit_per_minute)),
+        preview_rate: Arc::new(RateLimiter::per_minute(config.preview_limit_per_minute)),
+        preview_cache: Arc::new(handlers::PreviewCache::new()),
         config: Arc::new(config),
     }
 }
@@ -99,6 +103,8 @@ pub async fn run() {
     tokio::spawn(async move { cleanup_loop(cleanup_store, interval).await });
 
     let state = build_state(config.clone(), store);
+    let warm_state = state.clone();
+    tokio::spawn(async move { handlers::warm_previews(warm_state).await });
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.port))
         .await
         .expect("failed to bind port");
@@ -132,6 +138,7 @@ mod tests {
             cleanup_interval_secs: 600,
             max_upstream_concurrency: 10,
             rate_limit_per_minute: 100,
+            preview_limit_per_minute: 240,
             trust_forwarded_headers: false,
         }
     }
@@ -148,6 +155,7 @@ mod tests {
         assert_eq!(state.config.rate_limit_per_minute, 100);
         assert!(Arc::ptr_eq(&state.store, &store));
         assert_eq!(state.semaphore.available_permits(), 10);
+        assert_eq!(state.config.preview_limit_per_minute, 240);
     }
 
     #[test]

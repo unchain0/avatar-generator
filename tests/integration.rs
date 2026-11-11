@@ -31,6 +31,7 @@ fn config(base_url: String, data_dir: PathBuf, rate_limit: u32) -> Config {
         cleanup_interval_secs: 600,
         max_upstream_concurrency: 10,
         rate_limit_per_minute: rate_limit,
+        preview_limit_per_minute: 240,
         trust_forwarded_headers: false,
     }
 }
@@ -251,9 +252,9 @@ async fn index_renders_gallery_markup() {
     assert!(html.contains(r#"rel="icon" href="/static/favicon.svg""#));
     assert!(html.contains(r#"id="stageArt""#));
     assert!(html.contains(r#"id="galleryTitle""#));
-    assert!(html.contains("Sua galeria começa aqui"));
-    assert!(html.contains("Crie um avatar RoboHash"));
-    assert!(html.contains("site-footer"));
+    assert!(html.contains("Nada salvo ainda"));
+    assert!(html.contains("Gerador de avatares RoboHash"));
+    assert!(html.contains("class=\"foot\""));
 }
 
 #[tokio::test]
@@ -337,8 +338,8 @@ async fn index_renders_english_when_lang_cookie_set() {
     assert_eq!(status, StatusCode::OK);
     let html = String::from_utf8(body).unwrap();
     assert!(html.contains("RoboHash Avatar Generator"));
-    assert!(html.contains("Generate"));
-    assert!(html.contains("Download all"));
+    assert!(html.contains("Generate avatars"));
+    assert!(html.contains("Download ZIP"));
 }
 
 #[tokio::test]
@@ -523,8 +524,8 @@ async fn index_defaults_to_pt_br_when_lang_cookie_missing() {
     let html = String::from_utf8(body).unwrap();
     // Default language is pt-BR
     assert!(html.contains("Gerador de Avatares RoboHash"));
-    assert!(html.contains("Gerar"));
-    assert!(html.contains("Baixar tudo"));
+    assert!(html.contains("Gerar avatares"));
+    assert!(html.contains("Baixar ZIP"));
 }
 
 #[tokio::test]
@@ -616,16 +617,91 @@ async fn preview_rejects_unknown_options() {
 }
 
 #[tokio::test]
-async fn preview_is_rate_limited_like_generation() {
+async fn preview_is_served_from_cache_after_the_first_render() {
     let server = MockServer::start().await;
+    let (router, _dir) = harness(&server, 100).await;
+
+    for _ in 0..3 {
+        let (status, _, body) = send(
+            &router,
+            get("/preview?set=set1&background=bg1&size=120", None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, PNG);
+    }
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn preview_has_its_own_budget() {
+    let server = MockServer::start().await;
+    // Generation budget of one request must not cap a page of previews.
     let (router, _dir) = harness(&server, 1).await;
 
     let (status, _, _) = send(&router, get("/preview?set=set1&size=200", None)).await;
     assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(&router, get("/preview?set=set2&size=200", None)).await;
+    assert_eq!(status, StatusCode::OK);
 
-    let (status, _, _) = send(&router, get("/preview?set=set1&size=200", None)).await;
+    // Previews did not spend the generation budget, which still allows one call.
+    let body =
+        json!({"count": 1, "seed": "budget", "set": "set1", "background": "none", "size": 100});
+    let (status, _, _) = send(
+        &router,
+        json_request("POST", "/generate", body.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(&router, json_request("POST", "/generate", body, None)).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn warm_previews_fills_the_cache_for_the_first_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "image/png")
+                .set_body_bytes(PNG),
+        )
+        .mount(&server)
+        .await;
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let state = build_state(config(server.uri(), dir.path().to_path_buf(), 100), store);
+    let router = app(state.clone());
+
+    avatar_generator::handlers::warm_previews(state).await;
+    let warmed = server.received_requests().await.unwrap().len();
+    assert_eq!(warmed, 8, "five sets, two extra backgrounds and the stage");
+
+    let (status, _, _) = send(
+        &router,
+        get("/preview?set=set3&background=bg1&size=120", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        warmed,
+        "a warmed preview is served from cache"
+    );
+}
+
+#[tokio::test]
+async fn preview_reports_a_misconfigured_renderer() {
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let state = build_state(
+        config("not a url".to_string(), dir.path().to_path_buf(), 100),
+        store,
+    );
+    let router = app(state);
+
+    let (status, _, _) = send(&router, get("/preview?set=set1&size=120", None)).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[tokio::test]

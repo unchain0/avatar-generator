@@ -692,7 +692,6 @@ async fn warm_previews_fills_the_cache_for_the_first_page() {
 
 #[tokio::test]
 async fn preview_reports_a_misconfigured_renderer() {
-    let server = MockServer::start().await;
     let dir = TempDir::new().unwrap();
     let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
     let state = build_state(

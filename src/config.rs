@@ -10,6 +10,7 @@ pub struct Config {
     pub cleanup_interval_secs: u64,
     pub max_upstream_concurrency: usize,
     pub rate_limit_per_minute: u32,
+    pub preview_limit_per_minute: u32,
     pub trust_forwarded_headers: bool,
 }
 
@@ -29,6 +30,7 @@ impl Config {
             cleanup_interval_secs: 600,
             max_upstream_concurrency: 10,
             rate_limit_per_minute: 30,
+            preview_limit_per_minute: 240,
             trust_forwarded_headers: env_parse_bool("TRUST_PROXY", false),
         }
     }
@@ -45,6 +47,7 @@ impl Default for Config {
             cleanup_interval_secs: 600,
             max_upstream_concurrency: 10,
             rate_limit_per_minute: 30,
+            preview_limit_per_minute: 240,
             trust_forwarded_headers: false,
         }
     }
@@ -92,6 +95,7 @@ mod tests {
         assert_eq!(config.cleanup_interval_secs, 600);
         assert_eq!(config.max_upstream_concurrency, 10);
         assert_eq!(config.rate_limit_per_minute, 30);
+        assert_eq!(config.preview_limit_per_minute, 240);
         assert!(!config.trust_forwarded_headers);
     }
 

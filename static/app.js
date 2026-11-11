@@ -25,18 +25,18 @@
     }
 
     function trackPreviewErrors() {
-        document.querySelectorAll(".preview-tile img").forEach(function (image) {
+        document.querySelectorAll(".tile img").forEach(function (image) {
             image.dataset.defaultAlt = image.alt;
             image.addEventListener("error", function () {
-                const tile = image.closest(".preview-tile");
+                const tile = image.closest(".tile");
                 image.classList.add("unavailable");
-                tile.classList.add("preview-unavailable");
+                tile.classList.add("unavailable");
                 tile.dataset.previewError = body.dataset.msgPreviewUnavailable;
             });
             image.addEventListener("load", function () {
-                const tile = image.closest(".preview-tile");
+                const tile = image.closest(".tile");
                 image.classList.remove("unavailable");
-                tile.classList.remove("preview-unavailable");
+                tile.classList.remove("unavailable");
                 delete tile.dataset.previewError;
             });
         });
@@ -47,21 +47,16 @@
         const selectedBackground = valueOf("background");
 
         document.querySelectorAll("#setPreview [data-set]").forEach(function (tile) {
-            const set = tile.dataset.set;
-            tile.querySelector("img").src = previewPath(set, selectedBackground, 120);
-            tile.setAttribute("aria-pressed", String(set === selectedSet));
+            tile.setAttribute("aria-pressed", String(tile.dataset.set === selectedSet));
         });
 
         document.querySelectorAll("#bgPreview [data-background]").forEach(function (tile) {
-            const background = tile.dataset.background;
-            tile.querySelector("img").src = previewPath(selectedSet, background, 120);
-            tile.setAttribute("aria-pressed", String(background === selectedBackground));
+            tile.setAttribute("aria-pressed", String(tile.dataset.background === selectedBackground));
         });
 
         currentPreview.src = previewPath(selectedSet, selectedBackground, 300);
         previewSize.textContent = valueOf("size") + " × " + valueOf("size");
         stageArt.setAttribute("aria-busy", "true");
-        stageArt.classList.remove("is-unavailable");
     }
 
     async function generate(event) {
@@ -135,11 +130,11 @@
 
     currentPreview.addEventListener("load", function () {
         stageArt.setAttribute("aria-busy", "false");
-        stageArt.classList.remove("is-unavailable");
+        stageArt.classList.remove("unavailable");
     });
     currentPreview.addEventListener("error", function () {
         stageArt.setAttribute("aria-busy", "false");
-        stageArt.classList.add("is-unavailable");
+        stageArt.classList.add("unavailable");
     });
 
     document.getElementById("size").addEventListener("change", updatePreviews);

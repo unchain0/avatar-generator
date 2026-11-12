@@ -60,15 +60,12 @@ impl RateLimiter {
             buckets.retain(|_, w| now.duration_since(w.started) < self.window);
         }
 
+        // The retain above dropped every expired window, so a surviving entry
+        // is still inside its window and needs no reset here.
         let window = buckets.entry(key.to_string()).or_insert(Window {
             started: now,
             count: 0,
         });
-
-        if now.duration_since(window.started) >= self.window {
-            window.started = now;
-            window.count = 0;
-        }
 
         if window.count >= self.limit {
             return false;
@@ -105,6 +102,15 @@ mod tests {
         assert!(!limiter.check("k"));
         std::thread::sleep(Duration::from_millis(20));
         assert!(limiter.check("k"));
+    }
+
+    #[test]
+    fn oversized_bucket_table_is_pruned_before_counting() {
+        let limiter = RateLimiter::new_with_max(1, Duration::from_secs(60), 20_000);
+        for index in 0..10_001 {
+            limiter.check(&format!("client-{index}"));
+        }
+        assert!(limiter.check("fresh-client"));
     }
 
     #[test]

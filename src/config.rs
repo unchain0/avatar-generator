@@ -167,6 +167,43 @@ mod tests {
     }
 
     #[test]
+    fn from_env_reads_every_override_and_clamps_the_ttl() {
+        let keys = [
+            "PORT",
+            "TTL_DAYS",
+            "DATA_DIR",
+            "STATIC_DIR",
+            "ROBOHASH_BASE_URL",
+            "TRUST_PROXY",
+        ];
+        let previous: Vec<(&str, Option<String>)> =
+            keys.iter().map(|key| (*key, env::var(key).ok())).collect();
+
+        env::set_var("PORT", "9091");
+        env::set_var("TTL_DAYS", "999");
+        env::set_var("DATA_DIR", "/tmp/avatar-data");
+        env::set_var("STATIC_DIR", "/tmp/avatar-static");
+        env::set_var("ROBOHASH_BASE_URL", "http://127.0.0.1:9");
+        env::set_var("TRUST_PROXY", "yes");
+
+        let config = Config::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => env::set_var(key, value),
+                None => env::remove_var(key),
+            }
+        }
+
+        assert_eq!(config.port, 9091);
+        assert_eq!(config.default_ttl_days, crate::models::MAX_TTL_DAYS);
+        assert_eq!(config.data_dir, PathBuf::from("/tmp/avatar-data"));
+        assert_eq!(config.static_dir, PathBuf::from("/tmp/avatar-static"));
+        assert_eq!(config.robohash_base, "http://127.0.0.1:9");
+        assert!(config.trust_forwarded_headers);
+    }
+
+    #[test]
     fn env_path_returns_custom_when_set() {
         let key = "TEST_ENV_PATH_CUSTOM_12345";
         env::set_var(key, "/custom/path");

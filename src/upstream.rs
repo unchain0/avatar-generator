@@ -179,6 +179,43 @@ mod tests {
         assert!(validate_image(&large).is_err());
     }
 
+    #[test]
+    fn error_messages_name_the_failure() {
+        assert!(UpstreamError::Request("timeout".to_string())
+            .to_string()
+            .contains("request failed: timeout"));
+        assert!(UpstreamError::Status(502).to_string().contains("502"));
+        assert!(UpstreamError::Empty.to_string().contains("empty"));
+        assert!(UpstreamError::TooLarge.to_string().contains("exceeded"));
+        assert!(UpstreamError::NotAnImage.to_string().contains("not a PNG"));
+        assert!(UpstreamError::InvalidBase("bad".to_string())
+            .to_string()
+            .contains("invalid upstream base url: bad"));
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_rejects_a_chunked_body_over_the_limit() {
+        use axum::http::header::CONTENT_TYPE;
+        use axum::{body::Body, routing::get, Router};
+
+        let app = Router::new().route(
+            "/",
+            get(|| async {
+                let body = Body::from_stream(futures_util::stream::iter((0..6).map(|_| {
+                    Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![0u8; 1024 * 1024]))
+                })));
+                ([(CONTENT_TYPE, "image/png")], body)
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = reqwest::Client::new();
+        let result = fetch_avatar(&client, &format!("http://{address}/")).await;
+        assert!(matches!(result, Err(UpstreamError::TooLarge)));
+    }
+
     #[tokio::test]
     async fn fetch_avatar_success() {
         let server = MockServer::start().await;

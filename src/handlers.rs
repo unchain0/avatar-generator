@@ -566,18 +566,6 @@ async fn render_preview(
 /// visitor after a restart does not wait for nine renders. The renderer may
 /// still be starting, so each key gets a few attempts.
 pub async fn warm_previews(state: AppState) {
-    async fn warm_one(state: &AppState, set: RoboSet, background: Background, size: u32) {
-        for attempt in 0..3 {
-            if render_preview(state, set, background, size).await.is_ok() {
-                return;
-            }
-            if attempt < 2 {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            }
-        }
-        warn!("preview warm-up skipped set={set:?} {size}px");
-    }
-
     for set in [
         RoboSet::Set1,
         RoboSet::Set2,
@@ -585,13 +573,31 @@ pub async fn warm_previews(state: AppState) {
         RoboSet::Set4,
         RoboSet::Set5,
     ] {
-        warm_one(&state, set, Background::Bg1, 120).await;
+        warm_key(&state, set, Background::Bg1, 120, 3).await;
     }
     for background in [Background::Bg2, Background::None] {
-        warm_one(&state, RoboSet::Set1, background, 120).await;
+        warm_key(&state, RoboSet::Set1, background, 120, 3).await;
     }
-    warm_one(&state, RoboSet::Set1, Background::Bg1, 300).await;
+    warm_key(&state, RoboSet::Set1, Background::Bg1, 300, 3).await;
     tracing::info!("preview cache warmed");
+}
+
+async fn warm_key(
+    state: &AppState,
+    set: RoboSet,
+    background: Background,
+    size: u32,
+    attempts: u32,
+) {
+    for attempt in 0..attempts {
+        if render_preview(state, set, background, size).await.is_ok() {
+            return;
+        }
+        if attempt + 1 < attempts {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    }
+    warn!("preview warm-up skipped set={set:?} {size}px");
 }
 
 pub async fn get_avatar(State(state): State<AppState>, AxumPath(id): AxumPath<String>) -> Response {
@@ -916,5 +922,72 @@ mod tests {
             None,
             "oldest entries were evicted"
         );
+    }
+}
+
+#[cfg(test)]
+mod extra_tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::store::Store;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    fn state(dir: &std::path::Path, base: &str) -> AppState {
+        let store = Arc::new(Store::new(dir.to_path_buf()).unwrap());
+        let config = Config {
+            port: 0,
+            data_dir: dir.to_path_buf(),
+            static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
+            robohash_base: base.to_string(),
+            default_ttl_days: 1,
+            cleanup_interval_secs: 600,
+            max_upstream_concurrency: 2,
+            rate_limit_per_minute: 30,
+            preview_limit_per_minute: 240,
+            trust_forwarded_headers: false,
+        };
+        crate::build_state(config, store)
+    }
+
+    #[test]
+    fn preview_cache_default_and_poisoned_lookups_are_safe() {
+        let cache = PreviewCache::default();
+        let key = ("set1-bg1".to_string(), 120);
+        cache.put(key.clone(), vec![1]);
+
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = cache.entries.lock().unwrap();
+            panic!("poison the preview cache");
+        }));
+
+        assert_eq!(cache.get(&key), None);
+        cache.put(key, vec![2]);
+    }
+
+    #[tokio::test]
+    async fn render_preview_returns_a_cached_render_without_the_network() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = state(dir.path(), "http://127.0.0.1:9");
+        state
+            .preview_cache
+            .put(("set1-none".to_string(), 80), vec![9, 9]);
+
+        let bytes = render_preview(&state, RoboSet::Set1, Background::None, 80)
+            .await
+            .ok()
+            .expect("cached render");
+        assert_eq!(bytes, vec![9, 9]);
+    }
+
+    #[tokio::test]
+    async fn warm_key_gives_up_after_its_attempts() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = state(dir.path(), "not a url");
+        warm_key(&state, RoboSet::Set1, Background::None, 80, 1).await;
+        assert!(state
+            .preview_cache
+            .get(&("set1-none".to_string(), 80))
+            .is_none());
     }
 }

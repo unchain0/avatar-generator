@@ -12,7 +12,6 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use chrono::Utc;
 use config::Config;
 use rate::RateLimiter;
 use std::sync::Arc;
@@ -21,7 +20,6 @@ use store::Store;
 use tokio::sync::Semaphore;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -77,46 +75,6 @@ pub fn app(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn cleanup_loop(store: Arc<Store>, interval: Duration) {
-    let mut ticker = tokio::time::interval(interval);
-    ticker.tick().await;
-    loop {
-        ticker.tick().await;
-        match store.cleanup_expired(Utc::now()) {
-            Ok(removed) => tracing::info!(removed, "expired avatars cleaned up"),
-            Err(e) => tracing::error!("cleanup failed: {e}"),
-        }
-    }
-}
-
-pub async fn run() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
-    let config = Config::from_env();
-    let store = Arc::new(Store::new(config.data_dir.clone()).expect("failed to init store"));
-
-    let cleanup_store = store.clone();
-    let interval = Duration::from_secs(config.cleanup_interval_secs);
-    tokio::spawn(async move { cleanup_loop(cleanup_store, interval).await });
-
-    let state = build_state(config.clone(), store);
-    let warm_state = state.clone();
-    tokio::spawn(async move { handlers::warm_previews(warm_state).await });
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.port))
-        .await
-        .expect("failed to bind port");
-    tracing::info!(port = config.port, "listening");
-    axum::serve(
-        listener,
-        app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await
-    .expect("server error");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,9 +82,7 @@ mod tests {
     use crate::store::Store;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use std::time::Duration;
     use tempfile::TempDir;
-    use tokio::time::timeout;
 
     fn test_config(dir: &TempDir) -> Config {
         Config {
@@ -168,28 +124,6 @@ mod tests {
 
         // Router builds successfully - if it didn't, this would panic
         assert!(!format!("{:?}", router).is_empty());
-    }
-
-    #[tokio::test]
-    async fn cleanup_loop_runs_and_exits_on_drop() {
-        let dir = TempDir::new().unwrap();
-        let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
-        let interval = Duration::from_millis(10);
-
-        // Spawn cleanup loop
-        let cleanup_store = store.clone();
-        let handle = tokio::spawn(async move {
-            cleanup_loop(cleanup_store, interval).await;
-        });
-
-        // Give it time to run at least once
-        tokio::time::sleep(Duration::from_millis(30)).await;
-
-        // Drop the store to stop the loop (store is dropped when test ends)
-        // The loop will error on next iteration since store is gone
-        // We just verify it ran without panicking
-        handle.abort();
-        let _ = timeout(Duration::from_millis(100), handle).await;
     }
 
     #[tokio::test]

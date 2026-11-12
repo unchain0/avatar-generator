@@ -335,7 +335,7 @@ fn load_index(path: &Path) -> io::Result<HashMap<String, AvatarRecord>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AvatarOptions, Background, RoboSet};
+    use crate::models::{Background, RoboSet};
     use tempfile::tempdir;
 
     const ID_A: &str = "11111111-1111-1111-1111-111111111111";
@@ -779,9 +779,9 @@ mod extra_tests {
     fn delete_ignores_unknown_and_unusable_ids() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf()).unwrap();
-        assert_eq!(store.delete("not-a-uuid").unwrap(), false);
+        assert!(!store.delete("not-a-uuid").unwrap());
         let id = uuid::Uuid::now_v7().to_string();
-        assert_eq!(store.delete(&id).unwrap(), false);
+        assert!(!store.delete(&id).unwrap());
     }
 
     #[test]

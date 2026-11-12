@@ -109,6 +109,7 @@ mod failure_tests {
     use axum::http::Request;
 
     async fn failing_inner(_request: Request<()>) -> Result<Response, std::io::Error> {
+        tokio::task::yield_now().await;
         Err(std::io::Error::other("inner failed"))
     }
 

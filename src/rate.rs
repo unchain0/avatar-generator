@@ -105,6 +105,24 @@ mod tests {
     }
 
     #[test]
+    fn poisoned_bucket_table_is_still_usable() {
+        let limiter = RateLimiter::new(5, Duration::from_secs(60));
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = limiter.buckets.lock().unwrap();
+            panic!("poison buckets");
+        }));
+        assert!(limiter.check("k"));
+    }
+
+    #[test]
+    fn oldest_bucket_is_evicted_at_the_cap() {
+        let limiter = RateLimiter::new_with_max(5, Duration::from_secs(60), 1);
+        assert!(limiter.check("first"));
+        assert!(limiter.check("second"));
+        assert!(limiter.check("first"));
+    }
+
+    #[test]
     fn oversized_bucket_table_is_pruned_before_counting() {
         let limiter = RateLimiter::new_with_max(1, Duration::from_secs(60), 20_000);
         for index in 0..10_001 {

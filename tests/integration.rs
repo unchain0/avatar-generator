@@ -942,3 +942,35 @@ async fn preview_reports_its_own_rate_limit() {
     assert_eq!(second, StatusCode::TOO_MANY_REQUESTS);
     assert!(String::from_utf8_lossy(&body).contains("rate limit"));
 }
+
+#[tokio::test]
+async fn download_serves_the_png_as_an_attachment() {
+    let server = MockServer::start().await;
+    let (app, _dir) = harness(&server, 30).await;
+    let (cookie, id) = generate_one(&app).await;
+
+    let (status, headers, bytes) = send(&app, get(&format!("/download/{id}"), Some(&cookie))).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers.get(header::CONTENT_TYPE).unwrap(), "image/png");
+    assert_eq!(
+        headers.get(header::CONTENT_DISPOSITION).unwrap(),
+        &format!("attachment; filename=\"{id}.png\"")
+    );
+    assert_eq!(bytes, PNG);
+}
+
+#[tokio::test]
+async fn download_all_skips_an_unreadable_avatar() {
+    let server = MockServer::start().await;
+    let (app, dir) = harness(&server, 30).await;
+    let (cookie, _id) = generate_one(&app).await;
+    let png = first_png(dir.path());
+    chmod(&png, 0o000);
+
+    let (status, _, body) = send(&app, get("/download-all", Some(&cookie))).await;
+    chmod(&png, 0o644);
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).starts_with("PK"));
+}

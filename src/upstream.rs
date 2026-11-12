@@ -174,6 +174,26 @@ mod tests {
     }
 
     #[test]
+    fn url_rejects_a_base_without_path_segments() {
+        let options = AvatarOptions {
+            set: RoboSet::Set1,
+            background: Background::None,
+            size: 50,
+        };
+        assert!(matches!(
+            avatar_url("mailto:ops@example.com", "abc", &options),
+            Err(UpstreamError::InvalidBase(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_reports_a_transport_failure() {
+        let client = reqwest::Client::new();
+        let result = fetch_avatar(&client, "http://127.0.0.1:1/").await;
+        assert!(matches!(result, Err(UpstreamError::Request(_))));
+    }
+
+    #[test]
     fn validate_rejects_too_large() {
         let large = vec![0u8; MAX_AVATAR_BYTES + 1];
         assert!(validate_image(&large).is_err());

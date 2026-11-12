@@ -346,7 +346,7 @@ mod tests {
         AvatarRecord {
             id: id.into(),
             seed: format!("seed-{id}"),
-            options: AvatarOptions {
+            options: crate::models::AvatarOptions {
                 set: RoboSet::Set1,
                 background: Background::Bg1,
                 size: 200,
@@ -651,5 +651,181 @@ mod tests {
             .data_dir()
             .join(format!(".tmp_{ID_B}.png"))
             .exists());
+    }
+}
+
+#[cfg(test)]
+mod extra_tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use std::os::unix::fs::PermissionsExt;
+
+    fn chmod(path: &Path, mode: u32) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(mode);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    fn record(id: &str, session: &str) -> AvatarRecord {
+        AvatarRecord {
+            id: id.to_string(),
+            seed: "seed".to_string(),
+            options: crate::models::AvatarOptions {
+                set: crate::models::RoboSet::Set1,
+                background: crate::models::Background::None,
+                size: 100,
+            },
+            created_at: Utc::now(),
+            expires_at: Utc::now() + Duration::days(1),
+            session_id: session.to_string(),
+        }
+    }
+
+    #[test]
+    fn new_reports_an_unusable_data_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(Store::new(file).is_err());
+    }
+
+    #[test]
+    fn startup_drops_records_with_unusable_ids_and_orphan_temps() {
+        let dir = tempfile::tempdir().unwrap();
+        let invalid = "not-a-uuid";
+        std::fs::write(
+            dir.path().join("index.json"),
+            serde_json::to_vec(&serde_json::json!({
+                invalid: record(invalid, "s")
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(format!(".tmp_{invalid}.png")), b"x").unwrap();
+        let orphan = uuid::Uuid::now_v7().to_string();
+        std::fs::write(dir.path().join(format!(".tmp_{orphan}.png")), b"x").unwrap();
+
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        assert!(store.list_session("s").is_empty());
+        assert!(!dir.path().join(format!(".tmp_{orphan}.png")).exists());
+    }
+
+    #[test]
+    fn startup_recovers_a_pending_rename_and_ignores_extra_temps() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        std::fs::write(
+            dir.path().join("index.json"),
+            serde_json::to_vec(&serde_json::json!({ id.clone(): record(&id, "s") })).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(format!(".tmp_{id}.png")), b"png").unwrap();
+
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        assert_eq!(store.read_image(&id).unwrap(), Some(b"png".to_vec()));
+        assert!(!dir.path().join(format!(".tmp_{id}.png")).exists());
+
+        // A leftover temp next to a live final file is junk.
+        std::fs::write(dir.path().join(format!(".tmp_{id}.png")), b"tmp").unwrap();
+        let reopened = Store::new(dir.path().to_path_buf()).unwrap();
+        assert_eq!(reopened.read_image(&id).unwrap(), Some(b"png".to_vec()));
+        assert!(!dir.path().join(format!(".tmp_{id}.png")).exists());
+    }
+
+    #[test]
+    fn startup_reports_a_failed_repair_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        std::fs::write(
+            dir.path().join("index.json"),
+            serde_json::to_vec(&serde_json::json!({ id.clone(): record(&id, "s") })).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(format!(".tmp_{id}.png")), b"png").unwrap();
+        chmod(dir.path(), 0o555);
+
+        let result = Store::new(dir.path().to_path_buf());
+        chmod(dir.path(), 0o755);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn save_reports_unwritable_storage_and_capacity() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        chmod(dir.path(), 0o555);
+        let id = uuid::Uuid::now_v7().to_string();
+        assert!(store.save(record(&id, "s"), b"png").is_err());
+        chmod(dir.path(), 0o755);
+
+        for _ in 0..crate::models::MAX_SESSION_AVATARS {
+            let id = uuid::Uuid::now_v7().to_string();
+            store.save(record(&id, "full"), b"png").unwrap();
+        }
+        let extra = uuid::Uuid::now_v7().to_string();
+        assert!(store.save(record(&extra, "full"), b"png").is_err());
+    }
+
+    #[test]
+    fn save_reports_a_failed_index_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        std::fs::create_dir(dir.path().join("index.json")).unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        assert!(store.save(record(&id, "s"), b"png").is_err());
+    }
+
+    #[test]
+    fn delete_ignores_unknown_and_unusable_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        assert_eq!(store.delete("not-a-uuid").unwrap(), false);
+        let id = uuid::Uuid::now_v7().to_string();
+        assert_eq!(store.delete(&id).unwrap(), false);
+    }
+
+    #[test]
+    fn cleanup_without_expired_records_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        store
+            .save(record(&uuid::Uuid::now_v7().to_string(), "s"), b"png")
+            .unwrap();
+        assert_eq!(store.cleanup_expired(Utc::now()).unwrap(), 0);
+    }
+
+    #[test]
+    fn index_errors_are_reported_when_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.json");
+        std::fs::write(&path, b"{}").unwrap();
+        chmod(&path, 0o000);
+        let result = load_index(&path);
+        chmod(&path, 0o644);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn poisoned_storage_locks_are_recovered() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = store.records.lock().unwrap();
+            panic!("poison records");
+        }));
+        assert!(store.list_session("s").is_empty());
+    }
+
+    #[test]
+    fn release_reservation_survives_a_poisoned_pending_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        store.reserve_capacity("s", 1).unwrap();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = store.pending.lock().unwrap();
+            panic!("poison pending");
+        }));
+        store.release_reservation("s", 1);
+        assert!(store.reserve_capacity("s", 1).is_ok());
     }
 }

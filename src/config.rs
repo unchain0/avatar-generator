@@ -204,6 +204,37 @@ mod tests {
     }
 
     #[test]
+    fn from_env_falls_back_to_defaults_when_unset() {
+        let keys = [
+            "PORT",
+            "TTL_DAYS",
+            "DATA_DIR",
+            "STATIC_DIR",
+            "ROBOHASH_BASE_URL",
+            "TRUST_PROXY",
+        ];
+        let previous: Vec<(&str, Option<String>)> =
+            keys.iter().map(|key| (*key, env::var(key).ok())).collect();
+        for key in keys {
+            env::remove_var(key);
+        }
+
+        let config = Config::from_env();
+
+        for (key, value) in previous {
+            if let Some(value) = value {
+                env::set_var(key, value);
+            }
+        }
+
+        assert_eq!(config.port, 8080);
+        assert_eq!(config.data_dir, PathBuf::from("./data"));
+        assert_eq!(config.robohash_base, "https://robohash.org");
+        assert_eq!(config.default_ttl_days, crate::models::DEFAULT_TTL_DAYS);
+        assert!(!config.trust_forwarded_headers);
+    }
+
+    #[test]
     fn env_path_returns_custom_when_set() {
         let key = "TEST_ENV_PATH_CUSTOM_12345";
         env::set_var(key, "/custom/path");

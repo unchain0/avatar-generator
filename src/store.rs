@@ -81,15 +81,9 @@ impl Store {
                     continue;
                 };
                 if records.contains_key(id) {
-                    // Record kept and still missing final PNG would have been
-                    // repaired above; leftover temp with a live final is junk.
-                    let Some(final_path) = self.image_path(id) else {
-                        let _ = std::fs::remove_file(entry.path());
-                        continue;
-                    };
-                    if final_path.exists() {
-                        let _ = std::fs::remove_file(entry.path());
-                    }
+                    // Missing finals were repaired above, so any leftover temp
+                    // for a kept record is junk.
+                    let _ = std::fs::remove_file(entry.path());
                     continue;
                 }
                 let _ = std::fs::remove_file(entry.path());
@@ -119,7 +113,7 @@ impl Store {
     }
 
     fn persist(&self, records: &HashMap<String, AvatarRecord>) -> io::Result<()> {
-        let json = serde_json::to_vec_pretty(records)?;
+        let json = serde_json::to_vec_pretty(records).expect("stored records always serialize");
         let tmp = self.index_path.with_extension("json.tmp");
         std::fs::write(&tmp, json)?;
         std::fs::rename(&tmp, &self.index_path)?;
@@ -188,21 +182,23 @@ impl Store {
         }
     }
 
-    pub fn delete(&self, id: &str) -> io::Result<bool> {
+    /// Removes the record and its files. Returns whether the record was
+    /// deleted; an unusable id or a failed index write is reported as `false`.
+    pub fn delete(&self, id: &str) -> bool {
         let Some(path) = self.image_path(id) else {
-            return Ok(false);
+            return false;
         };
 
         let mut guard = self.lock();
         if !guard.contains_key(id) {
-            return Ok(false);
+            return false;
         }
 
         let mut next = guard.clone();
         next.remove(id);
 
         if self.persist(&next).is_err() {
-            return Ok(false);
+            return false;
         }
 
         // Index and memory stay aligned even if the file unlink fails; an
@@ -211,7 +207,7 @@ impl Store {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(self.temp_image_path(id));
 
-        Ok(true)
+        true
     }
 
     pub fn list_session(&self, session_id: &str) -> Vec<AvatarRecord> {
@@ -315,9 +311,7 @@ impl Store {
 
     fn remove_image_files(&self, ids: &[String]) {
         for id in ids {
-            if let Some(path) = self.image_path(id) {
-                let _ = std::fs::remove_file(path);
-            }
+            let _ = std::fs::remove_file(self.data_dir.join(format!("{id}.png")));
             let _ = std::fs::remove_file(self.temp_image_path(id));
         }
     }
@@ -335,7 +329,7 @@ fn load_index(path: &Path) -> io::Result<HashMap<String, AvatarRecord>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AvatarOptions, Background, RoboSet};
+    use crate::models::{Background, RoboSet};
     use tempfile::tempdir;
 
     const ID_A: &str = "11111111-1111-1111-1111-111111111111";
@@ -346,7 +340,7 @@ mod tests {
         AvatarRecord {
             id: id.into(),
             seed: format!("seed-{id}"),
-            options: AvatarOptions {
+            options: crate::models::AvatarOptions {
                 set: RoboSet::Set1,
                 background: Background::Bg1,
                 size: 200,
@@ -457,7 +451,7 @@ mod tests {
     fn delete_reports_missing_record() {
         let dir = tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf()).unwrap();
-        assert!(!store.delete(ID_A).unwrap());
+        assert!(!store.delete(ID_A));
     }
 
     /// When persist() fails, clear_session must leave the in-memory index
@@ -651,5 +645,264 @@ mod tests {
             .data_dir()
             .join(format!(".tmp_{ID_B}.png"))
             .exists());
+    }
+}
+
+#[cfg(test)]
+mod extra_tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use std::os::unix::fs::PermissionsExt;
+
+    fn chmod(path: &Path, mode: u32) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(mode);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    fn record(id: &str, session: &str) -> AvatarRecord {
+        AvatarRecord {
+            id: id.to_string(),
+            seed: "seed".to_string(),
+            options: crate::models::AvatarOptions {
+                set: crate::models::RoboSet::Set1,
+                background: crate::models::Background::None,
+                size: 100,
+            },
+            created_at: Utc::now(),
+            expires_at: Utc::now() + Duration::days(1),
+            session_id: session.to_string(),
+        }
+    }
+
+    #[test]
+    fn new_reports_an_unusable_data_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(Store::new(file).is_err());
+    }
+
+    #[test]
+    fn startup_drops_records_with_unusable_ids_and_orphan_temps() {
+        let dir = tempfile::tempdir().unwrap();
+        let invalid = "not-a-uuid";
+        std::fs::write(
+            dir.path().join("index.json"),
+            serde_json::to_vec(&serde_json::json!({
+                invalid: record(invalid, "s")
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(format!(".tmp_{invalid}.png")), b"x").unwrap();
+        let orphan = uuid::Uuid::now_v7().to_string();
+        std::fs::write(dir.path().join(format!(".tmp_{orphan}.png")), b"x").unwrap();
+
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        assert!(store.list_session("s").is_empty());
+        assert!(!dir.path().join(format!(".tmp_{orphan}.png")).exists());
+    }
+
+    #[test]
+    fn startup_recovers_a_pending_rename_and_ignores_extra_temps() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        std::fs::write(
+            dir.path().join("index.json"),
+            serde_json::to_vec(&serde_json::json!({ id.clone(): record(&id, "s") })).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(format!(".tmp_{id}.png")), b"png").unwrap();
+
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        assert_eq!(store.read_image(&id).unwrap(), Some(b"png".to_vec()));
+        assert!(!dir.path().join(format!(".tmp_{id}.png")).exists());
+
+        // A leftover temp next to a live final file is junk.
+        std::fs::write(dir.path().join(format!(".tmp_{id}.png")), b"tmp").unwrap();
+        let reopened = Store::new(dir.path().to_path_buf()).unwrap();
+        assert_eq!(reopened.read_image(&id).unwrap(), Some(b"png".to_vec()));
+        assert!(!dir.path().join(format!(".tmp_{id}.png")).exists());
+    }
+
+    #[test]
+    fn startup_reports_a_failed_repair_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        std::fs::write(
+            dir.path().join("index.json"),
+            serde_json::to_vec(&serde_json::json!({ id.clone(): record(&id, "s") })).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(format!(".tmp_{id}.png")), b"png").unwrap();
+        chmod(dir.path(), 0o555);
+
+        let result = Store::new(dir.path().to_path_buf());
+        chmod(dir.path(), 0o755);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn save_reports_unwritable_storage_and_capacity() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        chmod(dir.path(), 0o555);
+        let id = uuid::Uuid::now_v7().to_string();
+        assert!(store.save(record(&id, "s"), b"png").is_err());
+        chmod(dir.path(), 0o755);
+
+        for _ in 0..crate::models::MAX_SESSION_AVATARS {
+            let id = uuid::Uuid::now_v7().to_string();
+            store.save(record(&id, "full"), b"png").unwrap();
+        }
+        let extra = uuid::Uuid::now_v7().to_string();
+        assert!(store.save(record(&extra, "full"), b"png").is_err());
+    }
+
+    #[test]
+    fn save_reports_a_failed_index_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        std::fs::create_dir(dir.path().join("index.json")).unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        assert!(store.save(record(&id, "s"), b"png").is_err());
+    }
+
+    #[test]
+    fn delete_ignores_unknown_and_unusable_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        assert!(!store.delete("not-a-uuid"));
+        let id = uuid::Uuid::now_v7().to_string();
+        assert!(!store.delete(&id));
+    }
+
+    #[test]
+    fn cleanup_without_expired_records_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        store
+            .save(record(&uuid::Uuid::now_v7().to_string(), "s"), b"png")
+            .unwrap();
+        assert_eq!(store.cleanup_expired(Utc::now()).unwrap(), 0);
+    }
+
+    #[test]
+    fn index_errors_are_reported_when_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.json");
+        std::fs::write(&path, b"{}").unwrap();
+        chmod(&path, 0o000);
+        let result = load_index(&path);
+        chmod(&path, 0o644);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn poisoned_storage_locks_are_recovered() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = store.records.lock().unwrap();
+            panic!("poison records");
+        }));
+        assert!(store.list_session("s").is_empty());
+    }
+
+    #[test]
+    fn release_reservation_survives_a_poisoned_pending_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        store.reserve_capacity("s", 1).unwrap();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = store.pending.lock().unwrap();
+            panic!("poison pending");
+        }));
+        store.release_reservation("s", 1);
+        assert!(store.reserve_capacity("s", 1).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use std::os::unix::fs::PermissionsExt;
+
+    fn chmod(path: &Path, mode: u32) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(mode);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    fn record(id: &str, session: &str) -> AvatarRecord {
+        AvatarRecord {
+            id: id.to_string(),
+            seed: "seed".to_string(),
+            options: crate::models::AvatarOptions {
+                set: crate::models::RoboSet::Set1,
+                background: crate::models::Background::None,
+                size: 100,
+            },
+            created_at: Utc::now(),
+            expires_at: Utc::now() + Duration::days(1),
+            session_id: session.to_string(),
+        }
+    }
+
+    #[test]
+    fn startup_ignores_files_whose_names_are_not_utf8() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let store = Store::new(dir.path().to_path_buf()).unwrap();
+            assert!(store.list_session("s").is_empty());
+        }
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::OsStr::from_bytes(b"\xff\xfe.png");
+        std::fs::write(dir.path().join(name), b"x").unwrap();
+
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        assert!(store.list_session("s").is_empty());
+    }
+
+    #[test]
+    fn save_rejects_an_unusable_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        assert!(store.save(record("not-a-uuid", "s"), b"png").is_err());
+    }
+
+    #[test]
+    fn save_rolls_back_when_the_final_rename_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        store.save(record(&id, "s"), b"png").unwrap();
+
+        std::fs::remove_file(dir.path().join(format!("{id}.png"))).unwrap();
+        std::fs::create_dir(dir.path().join(format!("{id}.png"))).unwrap();
+
+        assert!(store.save(record(&id, "s"), b"png").is_err());
+        assert!(store.get(&id).is_some(), "the record stays after rollback");
+
+        std::fs::remove_dir(dir.path().join(format!("{id}.png"))).unwrap();
+    }
+
+    #[test]
+    fn startup_survives_a_data_directory_it_cannot_list() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let store = Store::new(dir.path().to_path_buf()).unwrap();
+            store
+                .save(record(&uuid::Uuid::now_v7().to_string(), "s"), b"png")
+                .unwrap();
+        }
+        chmod(dir.path(), 0o111);
+
+        let reopened = Store::new(dir.path().to_path_buf());
+        chmod(dir.path(), 0o755);
+
+        assert!(reopened.is_ok());
     }
 }

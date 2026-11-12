@@ -60,15 +60,12 @@ impl RateLimiter {
             buckets.retain(|_, w| now.duration_since(w.started) < self.window);
         }
 
+        // The retain above dropped every expired window, so a surviving entry
+        // is still inside its window and needs no reset here.
         let window = buckets.entry(key.to_string()).or_insert(Window {
             started: now,
             count: 0,
         });
-
-        if now.duration_since(window.started) >= self.window {
-            window.started = now;
-            window.count = 0;
-        }
 
         if window.count >= self.limit {
             return false;
@@ -105,6 +102,39 @@ mod tests {
         assert!(!limiter.check("k"));
         std::thread::sleep(Duration::from_millis(20));
         assert!(limiter.check("k"));
+    }
+
+    #[test]
+    fn poisoned_bucket_table_is_still_usable() {
+        let limiter = RateLimiter::new(5, Duration::from_secs(60));
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = limiter.buckets.lock().unwrap();
+            panic!("poison buckets");
+        }));
+        assert!(limiter.check("k"));
+    }
+
+    #[test]
+    fn a_zero_bucket_budget_still_counts_requests() {
+        let limiter = RateLimiter::new_with_max(5, Duration::from_secs(60), 0);
+        assert!(limiter.check("k"));
+    }
+
+    #[test]
+    fn oldest_bucket_is_evicted_at_the_cap() {
+        let limiter = RateLimiter::new_with_max(5, Duration::from_secs(60), 1);
+        assert!(limiter.check("first"));
+        assert!(limiter.check("second"));
+        assert!(limiter.check("first"));
+    }
+
+    #[test]
+    fn oversized_bucket_table_is_pruned_before_counting() {
+        let limiter = RateLimiter::new_with_max(1, Duration::from_secs(60), 20_000);
+        for index in 0..10_001 {
+            limiter.check(&format!("client-{index}"));
+        }
+        assert!(limiter.check("fresh-client"));
     }
 
     #[test]

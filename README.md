@@ -31,8 +31,10 @@ CDN. The UI ships in Portuguese (pt-BR, default) and English (en).
 ## Standards
 
 - CI runs `cargo fmt`, `clippy -D warnings`, the full test suite, `cargo audit`,
-  and coverage with gates of at least 90% line coverage and 90% region coverage
-  (LLVM region coverage is the stable stand-in for branch coverage).
+  and coverage gated by two numbers: **total at least 99.85%** of lines and
+  regions, and **no file below 99.6%** (LLVM region coverage is the stable
+  stand-in for branch coverage). The only file exclusion is the process
+  bootstrap in `src/main.rs`; see `docs/coverage-policy.md`.
 - HTTP responses include CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`,
   and `frame-ancestors 'none'` (plus `X-Frame-Options: DENY`). Covered by unit
   and integration tests under `src/security.rs` and `tests/integration.rs`.

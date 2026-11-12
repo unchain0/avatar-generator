@@ -99,7 +99,10 @@ pub async fn fetch_avatar(client: &reqwest::Client, url: &str) -> Result<Vec<u8>
     let mut bytes = Vec::with_capacity(1024);
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| UpstreamError::Request(e.to_string()))?;
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => return Err(UpstreamError::Request(error.to_string())),
+        };
         if bytes.len() + chunk.len() > MAX_AVATAR_BYTES {
             return Err(UpstreamError::TooLarge);
         }
@@ -174,9 +177,118 @@ mod tests {
     }
 
     #[test]
+    fn url_rejects_a_base_without_path_segments() {
+        let options = AvatarOptions {
+            set: RoboSet::Set1,
+            background: Background::None,
+            size: 50,
+        };
+        let error =
+            avatar_url("mailto:ops@example.com", "abc", &options).expect_err("invalid base");
+        assert!(error.to_string().contains("invalid upstream base url"));
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_reports_a_transport_failure() {
+        let client = reqwest::Client::new();
+        let error = fetch_avatar(&client, "http://127.0.0.1:1/")
+            .await
+            .expect_err("transport failure");
+        assert!(error.to_string().contains("request failed"));
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_reports_a_broken_body_stream() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await;
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: image/png\r\ntransfer-encoding: chunked\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            socket
+                .write_all(b"8\r\n\x89PNG\r\n\x1a\n\r\n")
+                .await
+                .unwrap();
+            socket.write_all(b"zz\r\n").await.unwrap();
+            socket.shutdown().await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let error = fetch_avatar(&client, &format!("http://{address}/"))
+            .await
+            .expect_err("broken body stream");
+        assert!(error.to_string().contains("request failed"));
+    }
+
+    #[test]
     fn validate_rejects_too_large() {
         let large = vec![0u8; MAX_AVATAR_BYTES + 1];
         assert!(validate_image(&large).is_err());
+    }
+
+    #[test]
+    fn error_messages_name_the_failure() {
+        assert!(UpstreamError::Request("timeout".to_string())
+            .to_string()
+            .contains("request failed: timeout"));
+        assert!(UpstreamError::Status(502).to_string().contains("502"));
+        assert!(UpstreamError::Empty.to_string().contains("empty"));
+        assert!(UpstreamError::TooLarge.to_string().contains("exceeded"));
+        assert!(UpstreamError::NotAnImage.to_string().contains("not a PNG"));
+        assert!(UpstreamError::InvalidBase("bad".to_string())
+            .to_string()
+            .contains("invalid upstream base url: bad"));
+    }
+
+    async fn oversized_png() -> (
+        [(axum::http::HeaderName, &'static str); 1],
+        axum::body::Body,
+    ) {
+        use axum::http::header::CONTENT_TYPE;
+        let chunk = axum::body::Bytes::from(vec![0u8; 1024 * 1024]);
+        let mut chunks: Vec<Result<axum::body::Bytes, std::io::Error>> = Vec::with_capacity(6);
+        for _ in 0..6 {
+            chunks.push(Ok(chunk.clone()));
+        }
+        (
+            [(CONTENT_TYPE, "image/png")],
+            axum::body::Body::from_stream(futures_util::stream::iter(chunks)),
+        )
+    }
+
+    #[tokio::test]
+    async fn fetch_avatar_rejects_a_chunked_body_over_the_limit() {
+        use axum::{routing::get, Router};
+
+        let app = Router::new().route("/", get(oversized_png));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
+        });
+
+        let client = reqwest::Client::new();
+        let error = fetch_avatar(&client, &format!("http://{address}/"))
+            .await
+            .expect_err("oversized chunked body");
+        assert!(error.to_string().contains("exceeded"));
+
+        let _ = shutdown.send(());
+        let _ = server.await;
     }
 
     #[tokio::test]
@@ -206,8 +318,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let result = fetch_avatar(&client, &server.uri()).await;
-        assert!(matches!(result, Err(UpstreamError::Status(404))));
+        let error = fetch_avatar(&client, &server.uri())
+            .await
+            .expect_err("status error");
+        assert!(error.to_string().contains("status 404"));
     }
 
     #[tokio::test]
@@ -223,8 +337,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let result = fetch_avatar(&client, &server.uri()).await;
-        assert!(matches!(result, Err(UpstreamError::NotAnImage)));
+        let error = fetch_avatar(&client, &server.uri())
+            .await
+            .expect_err("not an image");
+        assert!(error.to_string().contains("not a PNG"));
     }
 
     #[tokio::test]
@@ -244,8 +360,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let result = fetch_avatar(&client, &server.uri()).await;
-        assert!(matches!(result, Err(UpstreamError::TooLarge)));
+        let error = fetch_avatar(&client, &server.uri())
+            .await
+            .expect_err("oversized body");
+        assert!(error.to_string().contains("exceeded"));
     }
 
     #[tokio::test]
@@ -261,8 +379,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let result = fetch_avatar(&client, &server.uri()).await;
-        assert!(matches!(result, Err(UpstreamError::Empty)));
+        let error = fetch_avatar(&client, &server.uri())
+            .await
+            .expect_err("empty body");
+        assert!(error.to_string().contains("empty"));
     }
 
     #[tokio::test]
@@ -278,7 +398,9 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let result = fetch_avatar(&client, &server.uri()).await;
-        assert!(matches!(result, Err(UpstreamError::NotAnImage)));
+        let error = fetch_avatar(&client, &server.uri())
+            .await
+            .expect_err("not an image");
+        assert!(error.to_string().contains("not a PNG"));
     }
 }

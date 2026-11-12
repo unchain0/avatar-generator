@@ -724,3 +724,320 @@ fn parse_id(body: &[u8]) -> String {
     let payload: Value = serde_json::from_slice(body).unwrap();
     payload["avatars"][0]["id"].as_str().unwrap().to_string()
 }
+
+fn chmod(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = std::fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(mode);
+    std::fs::set_permissions(path, permissions).unwrap();
+}
+
+fn first_png(dir: &std::path::Path) -> PathBuf {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "png"))
+        .expect("generated png")
+}
+
+async fn generate_one(app: &Router) -> (String, String) {
+    let (status, headers, body) = send(
+        app,
+        json_request(
+            "POST",
+            "/generate",
+            json!({ "count": 1, "set": "set1", "background": "none", "size": 100 }),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let payload: Value = serde_json::from_slice(&body).unwrap();
+    let id = payload["avatars"][0]["id"].as_str().unwrap().to_string();
+    (session_cookie(&headers), id)
+}
+
+#[tokio::test]
+async fn generate_rejects_a_misconfigured_renderer_base() {
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let state = build_state(
+        config("not a url".to_string(), dir.path().to_path_buf(), 30),
+        store,
+    );
+    let app = app(state);
+
+    let (status, _, body) = send(
+        &app,
+        json_request(
+            "POST",
+            "/generate",
+            json!({ "count": 1, "set": "set1", "background": "none", "size": 100 }),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(String::from_utf8_lossy(&body).contains("misconfigured"));
+}
+
+#[tokio::test]
+async fn generate_reports_bad_gateway_when_storage_cannot_persist() {
+    let server = MockServer::start().await;
+    let (app, dir) = harness(&server, 30).await;
+    chmod(dir.path(), 0o555);
+
+    let (status, _, body) = send(
+        &app,
+        json_request(
+            "POST",
+            "/generate",
+            json!({ "count": 1, "set": "set1", "background": "none", "size": 100 }),
+            None,
+        ),
+    )
+    .await;
+    chmod(dir.path(), 0o755);
+
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(String::from_utf8_lossy(&body).contains("no avatars"));
+}
+
+#[tokio::test]
+async fn avatar_and_download_report_read_failures() {
+    let server = MockServer::start().await;
+    let (app, dir) = harness(&server, 30).await;
+    let (cookie, id) = generate_one(&app).await;
+    let png = first_png(dir.path());
+    chmod(&png, 0o000);
+
+    let (avatar_status, _, _) = send(&app, get(&format!("/avatar/{id}"), Some(&cookie))).await;
+    let (download_status, _, _) = send(&app, get(&format!("/download/{id}"), Some(&cookie))).await;
+
+    chmod(&png, 0o644);
+    assert_eq!(avatar_status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(download_status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn clear_all_and_delete_report_persistence_failures() {
+    let server = MockServer::start().await;
+    let (app, dir) = harness(&server, 30).await;
+    let (cookie, id) = generate_one(&app).await;
+    chmod(dir.path(), 0o555);
+
+    let (clear_status, _, _) = send(&app, post("/clear-all", &cookie)).await;
+    let (delete_status, _, _) = send(&app, del(&format!("/avatar/{id}"), &cookie)).await;
+    chmod(dir.path(), 0o755);
+
+    assert_eq!(clear_status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(delete_status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn download_all_rejects_an_archive_over_the_limit() {
+    let server = MockServer::start().await;
+    let (app, dir) = harness(&server, 30).await;
+    let (cookie, _) = generate_one(&app).await;
+    let png = first_png(dir.path());
+    let file = std::fs::OpenOptions::new().write(true).open(&png).unwrap();
+    file.set_len(100 * 1024 * 1024 + 1).unwrap();
+    drop(file);
+
+    let (status, _, body) = send(&app, get("/download-all", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(String::from_utf8_lossy(&body).contains("archive too large"));
+}
+
+#[tokio::test]
+async fn static_files_report_read_failures_and_directories() {
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(std::io::sink)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let dir = TempDir::new().unwrap();
+    let static_dir = TempDir::new().unwrap();
+    let secret = static_dir.path().join("locked.js");
+    std::fs::write(&secret, b"x").unwrap();
+    chmod(&secret, 0o000);
+    std::fs::create_dir(static_dir.path().join("folder")).unwrap();
+
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let mut settings = config(
+        "https://example.com".to_string(),
+        dir.path().to_path_buf(),
+        30,
+    );
+    settings.static_dir = static_dir.path().to_path_buf();
+    let app = app(build_state(settings, store));
+
+    let (locked_status, _, _) = send(&app, get("/static/locked.js", None)).await;
+    let (folder_status, _, _) = send(&app, get("/static/folder", None)).await;
+    chmod(&secret, 0o644);
+
+    assert_eq!(locked_status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(folder_status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn generate_reports_the_session_capacity_limit() {
+    let server = MockServer::start().await;
+    let (app, _dir) = harness(&server, 1000).await;
+    let payload = json!({ "count": 50, "set": "set1", "background": "none", "size": 100 });
+
+    let (first, headers, _) = send(
+        &app,
+        json_request("POST", "/generate", payload.clone(), None),
+    )
+    .await;
+    assert_eq!(first, StatusCode::OK);
+    let cookie = session_cookie(&headers);
+
+    let (second, _, _) = send(
+        &app,
+        json_request("POST", "/generate", payload, Some(&cookie)),
+    )
+    .await;
+    assert_eq!(second, StatusCode::OK);
+
+    let extra = json_request(
+        "POST",
+        "/generate",
+        json!({ "count": 1, "set": "set1", "background": "none", "size": 100 }),
+        Some(&cookie),
+    );
+    let (third, _, body) = send(&app, extra).await;
+
+    assert_eq!(third, StatusCode::TOO_MANY_REQUESTS);
+    assert!(String::from_utf8_lossy(&body).contains("maximum avatar cap"));
+}
+
+#[tokio::test]
+async fn preview_reports_its_own_rate_limit() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "image/png")
+                .set_body_bytes(PNG),
+        )
+        .mount(&server)
+        .await;
+
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let mut settings = config(server.uri(), dir.path().to_path_buf(), 1000);
+    settings.preview_limit_per_minute = 1;
+    let app = app(build_state(settings, store));
+
+    let (first, _, _) = send(
+        &app,
+        get("/preview?set=set1&background=none&size=120", None),
+    )
+    .await;
+    let (second, _, body) = send(
+        &app,
+        get("/preview?set=set1&background=none&size=160", None),
+    )
+    .await;
+
+    assert_eq!(first, StatusCode::OK);
+    assert_eq!(second, StatusCode::TOO_MANY_REQUESTS);
+    assert!(String::from_utf8_lossy(&body).contains("rate limit"));
+}
+
+#[tokio::test]
+async fn download_serves_the_png_as_an_attachment() {
+    let server = MockServer::start().await;
+    let (app, _dir) = harness(&server, 30).await;
+    let (cookie, id) = generate_one(&app).await;
+
+    let (status, headers, bytes) = send(&app, get(&format!("/download/{id}"), Some(&cookie))).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers.get(header::CONTENT_TYPE).unwrap(), "image/png");
+    assert_eq!(
+        headers.get(header::CONTENT_DISPOSITION).unwrap(),
+        &format!("attachment; filename=\"{id}.png\"")
+    );
+    assert_eq!(bytes, PNG);
+}
+
+#[tokio::test]
+async fn download_all_reports_an_unreadable_avatar_instead_of_partial_zip() {
+    let server = MockServer::start().await;
+    let (app, dir) = harness(&server, 30).await;
+    let (cookie, _id) = generate_one(&app).await;
+    let png = first_png(dir.path());
+    chmod(&png, 0o000);
+
+    let (status, _, _) = send(&app, get("/download-all", Some(&cookie))).await;
+    chmod(&png, 0o644);
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn static_read_failures_stay_500_without_a_logging_subscriber() {
+    let dir = TempDir::new().unwrap();
+    let static_dir = TempDir::new().unwrap();
+    let locked = static_dir.path().join("locked.css");
+    std::fs::write(&locked, b"x").unwrap();
+    chmod(&locked, 0o000);
+
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let mut settings = config(
+        "https://example.com".to_string(),
+        dir.path().to_path_buf(),
+        30,
+    );
+    settings.static_dir = static_dir.path().to_path_buf();
+    let app = app(build_state(settings, store));
+
+    let (status, _, _) = send(&app, get("/static/locked.css", None)).await;
+    chmod(&locked, 0o644);
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn static_requests_without_a_static_directory_are_not_found() {
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let mut settings = config(
+        "https://example.com".to_string(),
+        dir.path().to_path_buf(),
+        30,
+    );
+    settings.static_dir = dir.path().join("missing");
+    let app = app(build_state(settings, store));
+
+    let (status, _, _) = send(&app, get("/static/app.js", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn preview_reports_a_closed_renderer_slot() {
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let state = build_state(
+        config(
+            "http://127.0.0.1:9".to_string(),
+            dir.path().to_path_buf(),
+            30,
+        ),
+        store,
+    );
+    state.semaphore.close();
+    let app = app(state);
+
+    let (status, _, body) = send(
+        &app,
+        get("/preview?set=set1&background=none&size=120", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(String::from_utf8_lossy(&body).contains("preview unavailable"));
+}

@@ -58,26 +58,55 @@ jobs:
         run: |
           set -euo pipefail
           cargo llvm-cov --all-targets --lcov --output-path lcov.info
-          cargo llvm-cov report --summary-only
-          cargo llvm-cov report --json --summary-only > coverage-summary.json
+          # Exclusões declaradas em docs/coverage-policy.md.
+          cargo llvm-cov report --ignore-filename-regex 'src/main\.rs|/registry/'
+          cargo llvm-cov report --json \
+            --ignore-filename-regex 'src/main\.rs|/registry/' > coverage.json
           python3 - <<'PY'
           import json
           import sys
 
-          with open("coverage-summary.json", encoding="utf-8") as fh:
-              data = json.load(fh)
-          totals = data["data"][0]["totals"]
+          FLOOR_TOTAL = 99.85
+          FLOOR_FILE = 99.6
+          # Arquivos abaixo de FLOOR_FILE aceitos com justificativa escrita em
+          # docs/coverage-policy.md, e o piso próprio de cada um.
+          JUSTIFIED = {"security.rs": 99.4}
+
+          with open("coverage.json", encoding="utf-8") as handle:
+              data = json.load(handle)["data"][0]
+
+          totals = data["totals"]
           lines = float(totals["lines"]["percent"])
           regions = float(totals["regions"]["percent"])
-          print(f"Coverage gate: lines={lines:.2f}% regions={regions:.2f}% (min 90 each)")
-          # Region coverage is LLVM's stable branch-coverage metric on stable toolchains.
+          print(
+              f"Coverage gate: total lines={lines:.2f}% regions={regions:.2f}% "
+              f"(floor {FLOOR_TOTAL} each)"
+          )
+
           failed = False
-          if lines < 90.0:
-              print(f"line coverage below 90%: {lines:.2f}", file=sys.stderr)
+          for name, value in (("lines", lines), ("regions", regions)):
+              if value < FLOOR_TOTAL:
+                  print(f"total {name} below {FLOOR_TOTAL}%: {value:.2f}", file=sys.stderr)
+                  failed = True
+
+          for entry in data["files"]:
+              file_lines = float(entry["summary"]["lines"]["percent"])
+              file_regions = float(entry["summary"]["regions"]["percent"])
+              worst = min(file_lines, file_regions)
+              if worst >= FLOOR_FILE:
+                  continue
+              name = entry["filename"].rsplit("/", 1)[-1]
+              justified_floor = JUSTIFIED.get(name)
+              if justified_floor is not None and worst >= justified_floor:
+                  print(f"file justified in policy: {name} {worst:.2f}%")
+                  continue
+              print(
+                  f"file below {FLOOR_FILE}%: {entry['filename']} "
+                  f"lines={file_lines:.2f} regions={file_regions:.2f}",
+                  file=sys.stderr,
+              )
               failed = True
-          if regions < 90.0:
-              print(f"region (branch) coverage below 90%: {regions:.2f}", file=sys.stderr)
-              failed = True
+
           sys.exit(1 if failed else 0)
           PY
 

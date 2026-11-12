@@ -83,6 +83,9 @@ where
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn default_config_has_expected_values() {
@@ -168,6 +171,9 @@ mod tests {
 
     #[test]
     fn from_env_reads_every_override_and_clamps_the_ttl() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let keys = [
             "PORT",
             "TTL_DAYS",
@@ -176,6 +182,7 @@ mod tests {
             "ROBOHASH_BASE_URL",
             "TRUST_PROXY",
         ];
+        env::set_var("PORT", "1");
         let previous: Vec<(&str, Option<String>)> =
             keys.iter().map(|key| (*key, env::var(key).ok())).collect();
 
@@ -205,6 +212,9 @@ mod tests {
 
     #[test]
     fn from_env_falls_back_to_defaults_when_unset() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let keys = [
             "PORT",
             "TTL_DAYS",
@@ -213,6 +223,7 @@ mod tests {
             "ROBOHASH_BASE_URL",
             "TRUST_PROXY",
         ];
+        env::set_var("PORT", "7");
         let previous: Vec<(&str, Option<String>)> =
             keys.iter().map(|key| (*key, env::var(key).ok())).collect();
         for key in keys {

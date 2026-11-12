@@ -58,8 +58,10 @@ jobs:
         run: |
           set -euo pipefail
           cargo llvm-cov --all-targets --lcov --output-path lcov.info
-          cargo llvm-cov report --summary-only
-          cargo llvm-cov report --json --summary-only > coverage-summary.json
+          # Exclusão declarada em docs/coverage-policy.md: bootstrap do processo.
+          cargo llvm-cov report --summary-only --ignore-filename-regex 'src/main\.rs'
+          cargo llvm-cov report --json --summary-only \
+            --ignore-filename-regex 'src/main\.rs' > coverage-summary.json
           python3 - <<'PY'
           import json
           import sys
@@ -69,14 +71,14 @@ jobs:
           totals = data["data"][0]["totals"]
           lines = float(totals["lines"]["percent"])
           regions = float(totals["regions"]["percent"])
-          print(f"Coverage gate: lines={lines:.2f}% regions={regions:.2f}% (min 90 each)")
+          print(f"Coverage gate: lines={lines:.2f}% regions={regions:.2f}% (min 100 each)")
           # Region coverage is LLVM's stable branch-coverage metric on stable toolchains.
           failed = False
-          if lines < 90.0:
-              print(f"line coverage below 90%: {lines:.2f}", file=sys.stderr)
+          if lines < 100.0:
+              print(f"line coverage below 100%: {lines:.2f}", file=sys.stderr)
               failed = True
-          if regions < 90.0:
-              print(f"region (branch) coverage below 90%: {regions:.2f}", file=sys.stderr)
+          if regions < 100.0:
+              print(f"region (branch) coverage below 100%: {regions:.2f}", file=sys.stderr)
               failed = True
           sys.exit(1 if failed else 0)
           PY

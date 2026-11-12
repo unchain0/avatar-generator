@@ -104,6 +104,27 @@ fn add_security_headers(headers: &mut HeaderMap) {
 }
 
 #[cfg(test)]
+mod failure_tests {
+    use super::*;
+    use axum::http::Request;
+
+    async fn failing_inner(_request: Request<()>) -> Result<Response, std::io::Error> {
+        Err(std::io::Error::other("inner failed"))
+    }
+
+    #[tokio::test]
+    async fn inner_errors_are_propagated_unchanged() {
+        let mut service = SecurityHeadersLayer.layer(tower::service_fn(failing_inner));
+
+        let error = service
+            .call(Request::new(()))
+            .await
+            .expect_err("inner failure must propagate");
+        assert_eq!(error.to_string(), "inner failed");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use axum::{

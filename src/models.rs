@@ -305,6 +305,25 @@ mod tests {
     }
 
     #[test]
+    fn parse_set_and_background_cover_every_variant() {
+        for (value, expected) in [
+            ("set4", RoboSet::Set4),
+            ("4", RoboSet::Set4),
+            ("set5", RoboSet::Set5),
+            ("5", RoboSet::Set5),
+        ] {
+            assert_eq!(RoboSet::parse(value).unwrap(), expected);
+        }
+        for (value, expected) in [
+            ("bg1", Background::Bg1),
+            ("bg2", Background::Bg2),
+            ("", Background::None),
+        ] {
+            assert_eq!(Background::parse(value).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn parse_set_accepts_numeric_and_prefixed_forms() {
         assert_eq!(RoboSet::parse("1").unwrap(), RoboSet::Set1);
         assert_eq!(RoboSet::parse("set3").unwrap(), RoboSet::Set3);

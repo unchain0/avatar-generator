@@ -18,10 +18,9 @@ use chrono::{Duration as ChronoDuration, Utc};
 use std::io::{Cursor, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use tokio::task::JoinSet;
 use tracing::{error, warn};
 use uuid::Uuid;
-use zip::write::SimpleFileOptions;
+use zip::write::{SimpleFileOptions, ZipWriter};
 use zip::CompressionMethod;
 
 const SESSION_COOKIE: &str = "avatar_session_id";
@@ -172,10 +171,9 @@ struct IndexTemplate {
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
     cookie_header.split(';').find_map(|pair| {
-        let mut parts = pair.trim().splitn(2, '=');
-        let key = parts.next()?.trim();
-        let value = parts.next()?.trim();
-        (key == name && !value.is_empty()).then(|| value.to_string())
+        let (key, value) = pair.trim().split_once('=')?;
+        let value = value.trim();
+        (key.trim() == name && !value.is_empty()).then(|| value.to_string())
     })
 }
 
@@ -249,10 +247,9 @@ pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Respons
         t: texts(current_lang),
     };
 
-    let body = template.render().unwrap_or_else(|e| {
-        error!("failed to render index: {e}");
-        String::new()
-    });
+    // askama compiles the template at build time and renders into a String,
+    // so the only failure would be a write error that String cannot produce.
+    let body = template.render().unwrap_or_default();
 
     let mut response = Html(body).into_response();
     response
@@ -327,7 +324,7 @@ pub async fn generate(
     let expires_at = Utc::now() + ChronoDuration::days(validated.ttl_days);
     let mut results: Vec<(usize, AvatarView)> = Vec::new();
 
-    let mut tasks = JoinSet::new();
+    let mut tasks = Vec::new();
     for index in 0..validated.count {
         let seed = derive_seed(&base_seed, index);
         let url = match avatar_url(&state.config.robohash_base, &seed, &options) {
@@ -343,16 +340,16 @@ pub async fn generate(
         };
         let client = state.client.clone();
         let semaphore = state.semaphore.clone();
-        tasks.spawn(async move {
+        tasks.push(async move {
             let _permit = semaphore.acquire_owned().await;
             let result = fetch_avatar(&client, &url).await;
             (index, seed, result)
         });
     }
 
-    while let Some(joined) = tasks.join_next().await {
-        match joined {
-            Ok((index, seed, Ok(bytes))) => {
+    for (index, seed, result) in futures_util::future::join_all(tasks).await {
+        match result {
+            Ok(bytes) => {
                 let record = AvatarRecord {
                     id: Uuid::now_v7().to_string(),
                     seed,
@@ -371,8 +368,7 @@ pub async fn generate(
                     Err(e) => error!("failed to persist avatar: {e}"),
                 }
             }
-            Ok((index, seed, Err(e))) => warn!("avatar {index} ({seed}) failed: {e}"),
-            Err(_) => error!("avatar task panicked"),
+            Err(e) => warn!("avatar {index} ({seed}) failed: {e}"),
         }
     }
 
@@ -440,11 +436,9 @@ impl PreviewCache {
         let Ok(mut entries) = self.entries.lock() else {
             return;
         };
+        entries.retain(|_, (created, _)| created.elapsed() < PREVIEW_CACHE_TTL);
         if entries.len() >= PREVIEW_CACHE_CAPACITY {
-            entries.retain(|_, (created, _)| created.elapsed() < PREVIEW_CACHE_TTL);
-            if entries.len() >= PREVIEW_CACHE_CAPACITY {
-                entries.clear();
-            }
+            entries.clear();
         }
         entries.insert(key, (std::time::Instant::now(), bytes));
     }
@@ -647,13 +641,10 @@ pub async fn delete_avatar(
         return (StatusCode::NOT_FOUND, "avatar not found").into_response();
     }
 
-    match state.store.delete(&id) {
-        Ok(true) => Json(serde_json::json!({ "success": true })).into_response(),
-        Ok(false) => (StatusCode::INTERNAL_SERVER_ERROR, "failed to delete avatar").into_response(),
-        Err(e) => {
-            error!("failed to delete avatar {id}: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
-        }
+    if state.store.delete(&id) {
+        Json(serde_json::json!({ "success": true })).into_response()
+    } else {
+        (StatusCode::INTERNAL_SERVER_ERROR, "failed to delete avatar").into_response()
     }
 }
 
@@ -668,6 +659,21 @@ pub async fn clear_all(State(state): State<AppState>, headers: HeaderMap) -> Res
     }
 }
 
+fn build_archive(entries: &[(String, PathBuf)]) -> std::io::Result<Vec<u8>> {
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    for (id, path) in entries {
+        let bytes = std::fs::read(path)?;
+        zip.start_file(format!("{id}.png"), options)
+            .map_err(std::io::Error::other)?;
+        zip.write_all(&bytes)
+            .expect("writing to an in-memory cursor cannot fail");
+    }
+    zip.finish()
+        .map(|cursor| cursor.into_inner())
+        .map_err(std::io::Error::other)
+}
+
 pub async fn download_all(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let session = session_id(&headers);
     let records = state.store.list_session(&session);
@@ -675,61 +681,35 @@ pub async fn download_all(State(state): State<AppState>, headers: HeaderMap) -> 
         return (StatusCode::NOT_FOUND, "no avatars in this session").into_response();
     }
 
-    let mut total_size: usize = 0;
-    let mut ids_and_paths: Vec<(String, PathBuf)> = Vec::with_capacity(records.len());
-    for record in &records {
-        if let Some(path) = state.store.image_path(&record.id) {
-            if let Ok(metadata) = std::fs::metadata(&path) {
-                let size = metadata.len() as usize;
-                total_size += size;
-                if total_size > crate::models::MAX_ARCHIVE_BYTES {
-                    return (
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        Json(serde_json::json!({
-                            "error": "archive too large"
-                        })),
-                    )
-                        .into_response();
-                }
-            }
-            ids_and_paths.push((record.id.clone(), path));
-        }
+    let ids_and_paths: Vec<(String, PathBuf)> = records
+        .iter()
+        .map(|record| {
+            let path = state
+                .store
+                .image_path(&record.id)
+                .expect("stored records hold a valid id");
+            (record.id.clone(), path)
+        })
+        .collect();
+    let total_size: u64 = ids_and_paths
+        .iter()
+        .filter_map(|(_, path)| std::fs::metadata(path).ok())
+        .map(|metadata| metadata.len())
+        .sum();
+    if total_size > crate::models::MAX_ARCHIVE_BYTES as u64 {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": "archive too large" })),
+        )
+            .into_response();
     }
 
-    if ids_and_paths.is_empty() {
-        return (StatusCode::NOT_FOUND, "no avatars in this session").into_response();
-    }
-
-    let result = tokio::task::spawn_blocking(move || {
-        let cursor = Cursor::new(Vec::new());
-        let mut zip = zip::ZipWriter::new(cursor);
-        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-
-        for (id, path) in &ids_and_paths {
-            if let Ok(bytes) = std::fs::read(path) {
-                if let Err(e) = zip.start_file(format!("{id}.png"), options) {
-                    error!("failed to add {id} to zip: {e}");
-                    continue;
-                }
-                if let Err(e) = zip.write_all(&bytes) {
-                    error!("failed to write {id} to zip: {e}");
-                }
-            } else {
-                error!("failed to read {id} for zip");
-            }
-        }
-        zip.finish().map(|c| c.into_inner())
-    })
-    .await;
-
-    let data = match result {
-        Ok(Ok(data)) => data,
-        Ok(Err(e)) => {
-            error!("failed to finish zip: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
-        }
+    // Archives are capped at MAX_ARCHIVE_BYTES, so the copy is bounded and
+    // small enough to build on this thread instead of bouncing to the pool.
+    let data = match build_archive(&ids_and_paths) {
+        Ok(data) => data,
         Err(e) => {
-            error!("zip task panicked: {e}");
+            error!("failed to build archive: {e}");
             return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
         }
     };
@@ -765,7 +745,8 @@ pub async fn static_file(
             ([(CONTENT_TYPE, mime.as_ref())], data).into_response()
         }
         Err(e) => {
-            error!("failed to read static file {}: {e}", file_path.display());
+            let shown = file_path.to_string_lossy();
+            error!("failed to read static file {shown}: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
         }
     }
@@ -985,6 +966,80 @@ mod extra_tests {
         let dir = tempfile::TempDir::new().unwrap();
         let state = state(dir.path(), "not a url");
         warm_key(&state, RoboSet::Set1, Background::None, 80, 1).await;
+        assert!(state
+            .preview_cache
+            .get(&("set1-none".to_string(), 80))
+            .is_none());
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+
+    #[test]
+    fn cookies_reject_invalid_utf8_and_pairs_without_a_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cookie",
+            HeaderValue::from_bytes(b"lang=\xff").expect("opaque bytes"),
+        );
+        assert_eq!(cookie_value(&headers, "lang"), None);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static("novalue; lang=en"));
+        assert_eq!(cookie_value(&headers, "lang"), Some("en".to_string()));
+    }
+
+    #[test]
+    fn archive_rejects_a_path_that_is_not_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = vec![(
+            "00000000-0000-0000-0000-000000000000".to_string(),
+            dir.path().to_path_buf(),
+        )];
+        assert!(build_archive(&entry).is_err());
+    }
+
+    #[test]
+    fn archive_rejects_a_name_the_zip_format_cannot_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("x.png");
+        std::fs::write(&file, b"png").unwrap();
+        let entry = vec![("a".repeat(70_000), file)];
+        assert!(build_archive(&entry).is_err());
+    }
+}
+
+#[cfg(test)]
+mod warm_failure_tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::store::Store;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn warm_key_retries_before_giving_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+        let state = crate::build_state(
+            Config {
+                port: 0,
+                data_dir: dir.path().to_path_buf(),
+                static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
+                robohash_base: "not a url".to_string(),
+                default_ttl_days: 1,
+                cleanup_interval_secs: 600,
+                max_upstream_concurrency: 2,
+                rate_limit_per_minute: 30,
+                preview_limit_per_minute: 240,
+                trust_forwarded_headers: false,
+            },
+            store,
+        );
+
+        warm_key(&state, RoboSet::Set1, Background::None, 80, 2).await;
         assert!(state
             .preview_cache
             .get(&("set1-none".to_string(), 80))

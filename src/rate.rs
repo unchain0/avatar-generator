@@ -115,6 +115,12 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_bucket_budget_still_counts_requests() {
+        let limiter = RateLimiter::new_with_max(5, Duration::from_secs(60), 0);
+        assert!(limiter.check("k"));
+    }
+
+    #[test]
     fn oldest_bucket_is_evicted_at_the_cap() {
         let limiter = RateLimiter::new_with_max(5, Duration::from_secs(60), 1);
         assert!(limiter.check("first"));

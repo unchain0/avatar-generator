@@ -852,6 +852,11 @@ async fn download_all_rejects_an_archive_over_the_limit() {
 
 #[tokio::test]
 async fn static_files_report_read_failures_and_directories() {
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(std::io::sink)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
     let dir = TempDir::new().unwrap();
     let static_dir = TempDir::new().unwrap();
     let secret = static_dir.path().join("locked.js");
@@ -961,16 +966,78 @@ async fn download_serves_the_png_as_an_attachment() {
 }
 
 #[tokio::test]
-async fn download_all_skips_an_unreadable_avatar() {
+async fn download_all_reports_an_unreadable_avatar_instead_of_partial_zip() {
     let server = MockServer::start().await;
     let (app, dir) = harness(&server, 30).await;
     let (cookie, _id) = generate_one(&app).await;
     let png = first_png(dir.path());
     chmod(&png, 0o000);
 
-    let (status, _, body) = send(&app, get("/download-all", Some(&cookie))).await;
+    let (status, _, _) = send(&app, get("/download-all", Some(&cookie))).await;
     chmod(&png, 0o644);
 
-    assert_eq!(status, StatusCode::OK);
-    assert!(String::from_utf8_lossy(&body).starts_with("PK"));
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn static_read_failures_stay_500_without_a_logging_subscriber() {
+    let dir = TempDir::new().unwrap();
+    let static_dir = TempDir::new().unwrap();
+    let locked = static_dir.path().join("locked.css");
+    std::fs::write(&locked, b"x").unwrap();
+    chmod(&locked, 0o000);
+
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let mut settings = config(
+        "https://example.com".to_string(),
+        dir.path().to_path_buf(),
+        30,
+    );
+    settings.static_dir = static_dir.path().to_path_buf();
+    let app = app(build_state(settings, store));
+
+    let (status, _, _) = send(&app, get("/static/locked.css", None)).await;
+    chmod(&locked, 0o644);
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn static_requests_without_a_static_directory_are_not_found() {
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let mut settings = config(
+        "https://example.com".to_string(),
+        dir.path().to_path_buf(),
+        30,
+    );
+    settings.static_dir = dir.path().join("missing");
+    let app = app(build_state(settings, store));
+
+    let (status, _, _) = send(&app, get("/static/app.js", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn preview_reports_a_closed_renderer_slot() {
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let state = build_state(
+        config(
+            "http://127.0.0.1:9".to_string(),
+            dir.path().to_path_buf(),
+            30,
+        ),
+        store,
+    );
+    state.semaphore.close();
+    let app = app(state);
+
+    let (status, _, body) = send(
+        &app,
+        get("/preview?set=set1&background=none&size=120", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(String::from_utf8_lossy(&body).contains("preview unavailable"));
 }

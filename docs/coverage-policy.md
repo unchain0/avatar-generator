@@ -39,3 +39,18 @@ diferença até 100% é exatamente o que o item 2 descreve.
 
 Medição de referência (2026-11-12, com as exclusões acima): total **99,88%** de
 linhas e **99,89%** de regiões.
+
+## Resíduo de instrumentação declarado (2026-11-13)
+
+`llvm-cov` conta, em `src/handlers.rs` e `src/store.rs`, **2 linhas e 4/2
+regiões em cada** que não existem no arquivo: são trechos de expansão de macro
+e caminhos de pânico de `expect` de invariante. Evidência:
+
+- `cargo llvm-cov --html`: **0** linhas `uncovered` em ambos os arquivos;
+- `cargo llvm-cov --lcov`: nenhuma linha `DA:...,0` em ambos;
+- `cargo llvm-cov report --json`: nenhum segmento com `count == 0`.
+
+Mesmo assim o resumo do `llvm-cov` desconta essas linhas do total. Elas ficam
+declaradas aqui, com este motivo, em vez de virarem teste artificial. As linhas
+reais desses arquivos seguem cobertas; o piso total e o piso por arquivo
+continuam valendo.

@@ -6,7 +6,7 @@ rust-version = "1.88"
 
 [dependencies]
 axum = "0.7"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.54.1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 askama = "0.16"
 serde = { version = "1", features = ["derive"] }

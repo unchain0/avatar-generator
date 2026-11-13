@@ -1041,3 +1041,30 @@ async fn preview_reports_a_closed_renderer_slot() {
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(String::from_utf8_lossy(&body).contains("preview unavailable"));
 }
+
+#[tokio::test]
+async fn warm_previews_fills_every_first_page_key() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "image/png")
+                .set_body_bytes(PNG),
+        )
+        .expect(8)
+        .mount(&server)
+        .await;
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(Store::new(dir.path().to_path_buf()).unwrap());
+    let state = build_state(config(server.uri(), dir.path().to_path_buf(), 30), store);
+
+    avatar_generator::handlers::warm_previews(state.clone()).await;
+    server.verify().await;
+
+    let app = app(state);
+    let (status, _, body) =
+        send(&app, get("/preview?set=set1&background=bg1&size=300", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, PNG);
+    server.verify().await;
+}
